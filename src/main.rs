@@ -1,5 +1,9 @@
-use bevy::{asset::LoadState, prelude::*, render::camera::ScalingMode};
-use bevy_ecs_tilemap::prelude::*;
+use bevy::{
+    asset::LoadState,
+    prelude::*,
+    render::camera::ScalingMode,
+    sprite::{MaterialMesh2dBundle, Mesh2dHandle},
+};
 use bevy_ggrs::*;
 use bevy_matchbox::prelude::*;
 
@@ -11,6 +15,7 @@ mod map;
 
 use component::*;
 use input::{angle_to_vec, from_u8_angle};
+use map::*;
 
 struct GgrsConfig;
 impl ggrs::Config for GgrsConfig {
@@ -31,6 +36,10 @@ enum GameState {
 #[derive(Resource)]
 struct LoadingAssets(Vec<HandleUntyped>);
 
+#[derive(Resource)]
+struct LocalPlayerId(usize);
+
+const MAP_Z: f32 = 0.;
 const PLAYER_Z: f32 = 10.;
 const BULLET_Z: f32 = 15.;
 
@@ -57,19 +66,20 @@ fn main() {
             })
             .set(ImagePlugin::default_nearest()),
     )
+    .insert_resource(Msaa::Off)
+    .add_plugins(map::TiledPlugin)
     .insert_resource(LoadingAssets(vec![]))
-    .add_plugins(TilemapPlugin)
-    .add_plugins(map::TiledMapPlugin)
     .add_state::<GameState>()
     .add_systems(OnEnter(GameState::Loading), load)
     .add_systems(Update, check_load.run_if(in_state(GameState::Loading)))
     .add_systems(OnExit(GameState::Loading), (setup, setup_socket))
-    .add_systems(OnExit(GameState::Connecting), spawn_players)
-    .add_systems(OnEnter(GameState::Countdown), countdown)
     .add_systems(
         Update,
         wait_for_players.run_if(in_state(GameState::Connecting)),
     )
+    .add_systems(OnExit(GameState::Connecting), spawn_players)
+    .add_systems(OnEnter(GameState::Countdown), countdown)
+    .add_systems(Update, camera_follow)
     .add_systems(
         GgrsSchedule,
         (shoot, move_player, reload, move_bullets)
@@ -80,7 +90,13 @@ fn main() {
     .run();
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    maps: Res<Assets<TiledMap>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     commands.spawn(Camera2dBundle {
         projection: OrthographicProjection {
             scaling_mode: ScalingMode::FixedHorizontal(16. * 20.),
@@ -89,15 +105,35 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ..default()
     });
 
-    commands.spawn(map::TiledMapBundle {
-        tiled_map: asset_server.load("basic.tmx"),
-        ..default()
-    });
+    // spawn the background tilemap
+    let tilemap = &maps.get(&asset_server.load("basic.tmx")).unwrap().0;
+    let mesh = map::tilemap_to_mesh(tilemap);
+    let mesh_handle = meshes.add(mesh);
+    let tileset_handle = asset_server.load("OverworldTileset_v03.png");
+    let material = ColorMaterial {
+        texture: Some(tileset_handle),
+        color: Color::WHITE,
+    };
+    let material_handle = materials.add(material);
+
+    commands
+        .spawn(MaterialMesh2dBundle {
+            mesh: Mesh2dHandle(mesh_handle),
+            material: material_handle,
+            ..default()
+        })
+        .insert(
+            Transform::from_scale(Vec3::splat(0.5))
+                .with_translation((-8. * 25., -8. * 25., MAP_Z).into()),
+        );
 }
 
 fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
-    let map_handle: Handle<map::TiledMap> = asset_server.load("basic.tmx");
-    loading.0.push(map_handle.clone_untyped());
+    let tileset: Handle<Image> = asset_server.load("OverworldTileset_v03.png");
+    let tilemap: Handle<TiledMap> = asset_server.load("basic.tmx");
+
+    loading.0.push(tileset.clone_untyped());
+    loading.0.push(tilemap.clone_untyped());
 }
 
 fn check_load(
@@ -114,7 +150,7 @@ fn check_load(
             next_state.set(GameState::Connecting);
         }
         _ => {
-            info!("loading...");
+            info!("Loading assets...");
         }
     }
 }
@@ -144,7 +180,7 @@ fn shoot(
             commands
                 .spawn(Bullet {
                     dir: angle_to_vec(from_u8_angle(input.angle)),
-                    vel: 0.16,
+                    vel: 0.64,
                 })
                 .insert(SpriteBundle {
                     sprite: Sprite {
@@ -197,6 +233,9 @@ fn wait_for_players(
         .with_input_delay(2);
 
     for (i, player) in players.into_iter().enumerate() {
+        if player == ggrs::PlayerType::Local {
+            commands.insert_resource(LocalPlayerId(i));
+        }
         session_builder = session_builder
             .add_player(player, i)
             .expect("Could not add player to session");
@@ -216,6 +255,24 @@ fn setup_socket(mut commands: Commands) {
     let room_url = "ws://192.168.0.149:9998/p2pg?next=2";
     info!("connecting to room {}", room_url);
     commands.insert_resource(MatchboxSocket::new_ggrs(room_url));
+}
+
+fn camera_follow(
+    local_player_id: Option<Res<LocalPlayerId>>,
+    q_player: Query<(&Player, &Transform)>,
+    mut q_camera: Query<&mut Transform, (With<Camera>, Without<Player>)>,
+) {
+    let Some(id) = local_player_id else { return; };
+    for (player, player_transform) in &q_player {
+        if player.id != id.0 {
+            continue;
+        }
+
+        for mut transform in &mut q_camera {
+            transform.translation.x = player_transform.translation.x;
+            transform.translation.y = player_transform.translation.y;
+        }
+    }
 }
 
 fn move_player(
