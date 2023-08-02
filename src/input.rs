@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_ggrs::*;
 use bytemuck::{Pod, Zeroable};
 
-use crate::component::Player;
+use crate::component::{InputAngle, Player};
 
 use std::f32::consts::PI;
 
@@ -74,7 +74,7 @@ pub fn input(
     mouse_buttons: Res<Input<MouseButton>>,
     q_window: Query<&Window>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
-    q_player: Query<(&Player, &GlobalTransform)>,
+    mut q_player: Query<(&Player, &mut InputAngle, &GlobalTransform)>,
 ) -> PlayerInput {
     let mut btn = 0u8;
 
@@ -99,19 +99,25 @@ pub fn input(
 
     let mut angle = 0u8;
     // get the cursor position in the world
-    if let Some(cursor_pos) = window
+    let cursor_pos: Option<Vec2> = window
         .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor))
-    {
-        // fetch our own player position
-        for (player, player_transform) in &q_player {
-            if player.id == player_handle.0 {
+        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor));
+
+    // fetch our own player position
+    for (player, mut input_angle, player_transform) in &mut q_player {
+        if player.id == player_handle.0 {
+            if let Some(cursor_pos) = cursor_pos {
+                // cursor in window
                 let self_pos = player_transform.translation().truncate();
                 angle = to_u8_angle(vec_to_angle(cursor_pos - self_pos));
-                break;
+                // cache this known angle
+                input_angle.0 = angle;
+            } else {
+                // if no cursor pos, use the last known angle
+                angle = input_angle.0;
             }
+            break;
         }
     }
-
     PlayerInput { btn, angle }
 }
