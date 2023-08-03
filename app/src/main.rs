@@ -7,20 +7,23 @@ use bevy::{
     prelude::*,
     render::{camera::ScalingMode, primitives::Aabb},
 };
+use bevy_egui::EguiPlugin;
 use bevy_ggrs::*;
 
 mod animation;
 mod collision;
 mod component;
+mod gui;
 mod input;
 mod map;
 mod p2p;
 mod rand;
 
 use animation::*;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use collision::*;
 use component::*;
-use input::{angle_to_vec, from_u8_angle};
+use input::*;
 use map::*;
 use p2p::*;
 use rand::Rng;
@@ -29,6 +32,7 @@ use rand::Rng;
 pub enum GameState {
     #[default]
     Loading,
+    Lobby,
     Connecting,
     Countdown,
     Combat,
@@ -57,7 +61,6 @@ fn main() {
 
     app.insert_resource(Msaa::Off)
         .insert_resource(LoadingAssets(vec![]))
-        .insert_resource(Rng::new(8008135)) // heh
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -74,11 +77,13 @@ fn main() {
         )
         .add_plugins(map::TiledPlugin)
         .add_plugins(SpriteAnimationPlugin)
-        //.add_plugins(DebugHitboxPlugin)
+        .add_plugins(DebugHitboxPlugin)
         .add_state::<GameState>()
         .add_systems(OnEnter(GameState::Loading), load) // load essential assets
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
-        .add_systems(OnExit(GameState::Loading), (setup, setup_socket)) // pre-connect initialization (camera, bg, etc.)
+        .add_systems(OnExit(GameState::Loading), setup) // pre-connect initialization (camera, bg, etc.)
+        .add_systems(Update, gui::main_menu.run_if(in_state(GameState::Lobby)))
+        .add_systems(OnEnter(GameState::Connecting), setup_socket)
         .add_systems(
             Update,
             wait_for_players.run_if(in_state(GameState::Connecting)),
@@ -104,8 +109,8 @@ fn main() {
                 .run_if(in_state(GameState::Combat)),
         ) // synchronized p2p combat system ("the gameplay")
         .add_systems(Update, (camera_follow, animate_player, animate_bow)) // client-side non-deterministic systems
-        .add_plugins(bevy_inspector_egui::bevy_egui::EguiPlugin)
-        //.add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(EguiPlugin)
+        .add_plugins(WorldInspectorPlugin::new())
         .run();
 }
 
@@ -185,6 +190,7 @@ fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
     let bow: Handle<Image> = asset_server.load("bow.png");
     let bow_charge: Handle<AudioSource> = asset_server.load("sfx/Bow_Charge.wav");
     let bow_release: Handle<AudioSource> = asset_server.load("sfx/Bow_Release.wav");
+    let damage: Handle<AudioSource> = asset_server.load("sfx/Damage_1.wav");
 
     loading.0.push(tileset.clone_untyped());
     loading.0.push(tilemap.clone_untyped());
@@ -193,6 +199,7 @@ fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
     loading.0.push(bow.clone_untyped());
     loading.0.push(bow_charge.clone_untyped());
     loading.0.push(bow_release.clone_untyped());
+    loading.0.push(damage.clone_untyped());
 }
 
 fn check_load(
@@ -206,7 +213,7 @@ fn check_load(
             panic!("Could not load assets...");
         }
         LoadState::Loaded => {
-            next_state.set(GameState::Connecting);
+            next_state.set(GameState::Lobby);
         }
         _ => {
             info!("Loading assets...");
@@ -220,6 +227,7 @@ fn countdown(mut next_state: ResMut<NextState<GameState>>) {
 
 fn bullet_player_collisions(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<Player>)>,
     q_player: Query<(Entity, &Hitbox, &Transform), (With<Player>, Without<Bullet>)>,
 ) {
@@ -230,6 +238,15 @@ fn bullet_player_collisions(
                 (&b_hitbox.shape, b_transform),
             ) {
                 commands.entity(b_entity).despawn();
+                commands.spawn(AudioBundle {
+                    source: asset_server.load("sfx/Damage_1.wav"),
+                    settings: PlaybackSettings {
+                        mode: PlaybackMode::Despawn,
+                        volume: Volume::Relative(VolumeLevel::new(0.3)),
+                        speed: 1.,
+                        ..default()
+                    },
+                });
             }
         }
     }
@@ -279,7 +296,8 @@ fn shoot(
                 source: asset_server.load("sfx/Bow_Release.wav"),
                 settings: PlaybackSettings {
                     mode: PlaybackMode::Despawn,
-                    volume: Volume::Relative(VolumeLevel::new(0.1)),
+                    volume: Volume::Relative(VolumeLevel::new(0.2)),
+                    speed: 2.,
                     ..default()
                 },
             });
@@ -296,22 +314,21 @@ fn reload(
     for (player, mut can_shoot) in &mut q_player {
         let (input, _) = inputs[player.id];
 
-        // only recharge once we've let go of mouse1
-        if can_shoot.value {
-            can_shoot.since_last += 1;
+        if can_shoot.since_last == 10 {
+            commands.spawn(AudioBundle {
+                source: asset_server.load("sfx/Bow_Charge.wav"),
+                settings: PlaybackSettings {
+                    mode: PlaybackMode::Despawn,
+                    volume: Volume::Relative(VolumeLevel::new(0.4)),
+                    ..default()
+                },
+            });
         }
+        can_shoot.since_last += 1;
 
         if !input.fire() {
             if !can_shoot.value {
                 can_shoot.value = true;
-                commands.spawn(AudioBundle {
-                    source: asset_server.load("sfx/Bow_Charge.wav"),
-                    settings: PlaybackSettings {
-                        mode: PlaybackMode::Despawn,
-                        volume: Volume::Relative(VolumeLevel::new(0.2)),
-                        ..default()
-                    },
-                });
             }
         }
     }
@@ -399,7 +416,11 @@ fn animate_bow(
 ) {
     for (mut bow_indices, parent) in &mut q_bow {
         let Ok(can_shoot) = q_player.get(parent.get()) else { continue; };
-        let new_indices = if can_shoot.value { BOW_DRAW } else { BOW_EMPTY };
+        let new_indices = if can_shoot.since_last > 10 {
+            BOW_DRAW
+        } else {
+            BOW_EMPTY
+        };
         if *bow_indices != new_indices {
             *bow_indices = new_indices;
         }

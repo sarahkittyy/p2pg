@@ -52,7 +52,8 @@ fn tick_animations(
                 }
             } else {
                 sprite.index + 1
-            };
+            }
+            .clamp(indices.first, indices.last);
         }
     }
 }

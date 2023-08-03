@@ -1,6 +1,6 @@
 use bevy::prelude::*;
+use bevy_egui::EguiContexts;
 use bevy_ggrs::*;
-use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bytemuck::{Pod, Zeroable};
 
 use crate::component::{InputAngle, MainCamera, Player};

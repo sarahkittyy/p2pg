@@ -31,7 +31,6 @@ pub fn wait_for_players(
     if socket.get_channel(0).is_err() {
         return;
     }
-
     socket.update_peers();
 
     let num_players = 2;
@@ -44,7 +43,8 @@ pub fn wait_for_players(
 
     let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(num_players)
-        .with_input_delay(2);
+        .with_input_delay(2)
+        .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 60 });
 
     for (i, player) in players.into_iter().enumerate() {
         if player == ggrs::PlayerType::Local {
