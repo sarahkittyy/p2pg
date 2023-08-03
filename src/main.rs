@@ -5,12 +5,9 @@ use bevy::{
     audio::Volume,
     audio::{PlaybackMode, VolumeLevel},
     prelude::*,
-    render::camera::ScalingMode,
-    sprite::{MaterialMesh2dBundle, Mesh2dHandle},
+    render::{camera::ScalingMode, primitives::Aabb},
 };
 use bevy_ggrs::*;
-
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 mod animation;
 mod collision;
@@ -18,6 +15,7 @@ mod component;
 mod input;
 mod map;
 mod p2p;
+mod rand;
 
 use animation::*;
 use collision::*;
@@ -25,6 +23,7 @@ use component::*;
 use input::{angle_to_vec, from_u8_angle};
 use map::*;
 use p2p::*;
+use rand::Rng;
 
 #[derive(States, Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum GameState {
@@ -53,9 +52,12 @@ fn main() {
         .register_rollback_component::<Velocity>()
         .register_rollback_component::<Lifetime>()
         .register_rollback_component::<InputAngle>()
+        .register_rollback_resource::<Rng>()
         .build(&mut app);
 
     app.insert_resource(Msaa::Off)
+        .insert_resource(LoadingAssets(vec![]))
+        .insert_resource(Rng::new(8008135)) // heh
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -72,19 +74,20 @@ fn main() {
         )
         .add_plugins(map::TiledPlugin)
         .add_plugins(SpriteAnimationPlugin)
-        .add_plugins(DebugHitboxPlugin)
-        .insert_resource(LoadingAssets(vec![]))
+        //.add_plugins(DebugHitboxPlugin)
         .add_state::<GameState>()
-        .add_systems(OnEnter(GameState::Loading), load)
-        .add_systems(Update, check_load.run_if(in_state(GameState::Loading)))
-        .add_systems(OnExit(GameState::Loading), (setup, setup_socket))
+        .add_systems(OnEnter(GameState::Loading), load) // load essential assets
+        .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
+        .add_systems(OnExit(GameState::Loading), (setup, setup_socket)) // pre-connect initialization (camera, bg, etc.)
         .add_systems(
             Update,
             wait_for_players.run_if(in_state(GameState::Connecting)),
-        )
-        .add_systems(OnExit(GameState::Connecting), spawn_players)
-        .add_systems(OnEnter(GameState::Countdown), countdown)
-        .add_systems(Update, (camera_follow, animate_player, animate_bow))
+        ) // "lobby" -> waits for other player(s) and then transitions to countdown
+        .add_systems(OnExit(GameState::Connecting), spawn_players) // spawn players once connected
+        .add_systems(
+            GgrsSchedule,
+            countdown.run_if(in_state(GameState::Countdown)),
+        ) //TODO: pre-game countdown system
         .add_systems(
             GgrsSchedule,
             (
@@ -99,8 +102,10 @@ fn main() {
             )
                 .chain()
                 .run_if(in_state(GameState::Combat)),
-        )
-        .add_plugins(WorldInspectorPlugin::new())
+        ) // synchronized p2p combat system ("the gameplay")
+        .add_systems(Update, (camera_follow, animate_player, animate_bow)) // client-side non-deterministic systems
+        .add_plugins(bevy_inspector_egui::bevy_egui::EguiPlugin)
+        //.add_plugins(WorldInspectorPlugin::new())
         .run();
 }
 
@@ -111,16 +116,47 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    commands.spawn(Camera2dBundle {
-        projection: OrthographicProjection {
-            scaling_mode: ScalingMode::AutoMax {
-                max_height: 16. * 20.,
-                max_width: 16. * 20.,
+    let ideal_aspect_ratio = 16f32 / 9.;
+    let max_width = 16. * 25.;
+    let max_height = max_width / ideal_aspect_ratio;
+
+    // main camera
+    commands
+        .spawn(MainCamera)
+        .insert(Camera2dBundle {
+            projection: OrthographicProjection {
+                // optimize view area on 16
+                scaling_mode: ScalingMode::AutoMax {
+                    max_height,
+                    max_width,
+                },
+                ..default()
             },
+            camera: Camera {
+                order: 0,
+                ..default()
+            },
+            ..default()
+        })
+        .insert(FollowPlayer);
+
+    // minimap camera ( BORKED ! )
+    // https://github.com/bevyengine/bevy/issues/9340
+    /*commands.spawn(MinimapCamera).insert(Camera2dBundle {
+        projection: OrthographicProjection {
+            scaling_mode: ScalingMode::Fixed { width: 100., height: 100. },
+            ..default()
+        },
+        camera: Camera {
+            viewport: Some(Viewport {
+                physical_size: UVec2::splat(100),
+                ..default()
+            }),
+            order: 1,
             ..default()
         },
         ..default()
-    });
+    }).insert(FollowPlayer);*/
 
     // spawn the background tilemap
     let tilemap = &maps.get(&asset_server.load("basic.tmx")).unwrap().0;
@@ -134,14 +170,10 @@ fn setup(
     let material_handle = materials.add(material);
 
     commands
-        .spawn(MaterialMesh2dBundle {
-            mesh: Mesh2dHandle(mesh_handle),
-            material: material_handle,
-            ..default()
-        })
+        .spawn(TilemapBundle::new(mesh_handle, material_handle))
         .insert(
             Transform::from_scale(Vec3::splat(0.5))
-                .with_translation((-8. * 25., -8. * 25., MAP_Z).into()),
+                .with_translation((-16. * 25., -16. * 25., MAP_Z).into()),
         );
 }
 
@@ -236,7 +268,7 @@ fn shoot(
             let pos = player_transform.translation.truncate();
 
             commands
-                .spawn(BulletBundle::new(dir, 1.5, 200, bullet_handle.clone()))
+                .spawn(BulletBundle::new(dir, 2.2, 150, bullet_handle.clone()))
                 .insert(
                     Transform::from_xyz(pos.x + dir.x * 16., pos.y + dir.y * 16., BULLET_Z)
                         .with_rotation(Quat::from_rotation_z(arrow_angle)),
@@ -246,7 +278,7 @@ fn shoot(
             commands.spawn(AudioBundle {
                 source: asset_server.load("sfx/Bow_Release.wav"),
                 settings: PlaybackSettings {
-                    mode: PlaybackMode::Once,
+                    mode: PlaybackMode::Despawn,
                     volume: Volume::Relative(VolumeLevel::new(0.1)),
                     ..default()
                 },
@@ -275,8 +307,8 @@ fn reload(
                 commands.spawn(AudioBundle {
                     source: asset_server.load("sfx/Bow_Charge.wav"),
                     settings: PlaybackSettings {
-                        mode: PlaybackMode::Once,
-                        volume: Volume::Relative(VolumeLevel::new(0.1)),
+                        mode: PlaybackMode::Despawn,
+                        volume: Volume::Relative(VolumeLevel::new(0.2)),
                         ..default()
                     },
                 });
@@ -288,17 +320,38 @@ fn reload(
 fn camera_follow(
     local_player_id: Option<Res<LocalPlayerId>>,
     q_player: Query<(&Player, &Transform)>,
-    mut q_camera: Query<&mut Transform, (With<Camera>, Without<Player>)>,
+    mut q_camera: Query<
+        (&mut Transform, &OrthographicProjection),
+        (With<FollowPlayer>, With<Camera>, Without<Player>),
+    >,
+    q_map: Query<(&Aabb, &Transform), (With<Tilemap>, Without<Camera>, Without<Player>)>,
 ) {
     let Some(id) = local_player_id else { return; };
+    // tilemap aabb relative to itself
+    let Ok((map_aabb, map_transform)) = q_map.get_single() else { return; };
     for (player, player_transform) in &q_player {
         if player.id != id.0 {
             continue;
         }
 
-        for mut transform in &mut q_camera {
-            transform.translation.x = player_transform.translation.x;
-            transform.translation.y = player_transform.translation.y;
+        for (mut transform, proj) in &mut q_camera {
+            let player_pos = player_transform.translation.truncate();
+            let viewport_area = proj.area;
+
+            let map_center = map_transform
+                .transform_point(map_aabb.center.into())
+                .truncate();
+            let map_halfsize = (map_transform.scale * Vec3::from(map_aabb.half_extents)).truncate();
+
+            // map boundary in world coordinates
+            let map_min = map_center - map_halfsize;
+            let map_max = map_center + map_halfsize;
+
+            let camera_min = map_min + viewport_area.size() / 2.;
+            let camera_max = map_max - viewport_area.size() / 2.;
+
+            transform.translation.x = player_pos.x.clamp(camera_min.x, camera_max.x);
+            transform.translation.y = player_pos.y.clamp(camera_min.y, camera_max.y);
         }
     }
 }
@@ -370,7 +423,7 @@ fn move_player(
         let (input, _) = inputs[player.id];
 
         let dir = input.direction();
-        let delta = (dir * 0.8).normalize_or_zero();
+        let delta = (dir * 1.4).normalize_or_zero();
         velocity.0 = delta;
 
         transform.translation += velocity.0.extend(0.);

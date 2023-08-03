@@ -1,7 +1,8 @@
 use crate::animation::*;
 use crate::collision::*;
+use bevy::sprite::MaterialMesh2dBundle;
+use bevy::sprite::Mesh2dHandle;
 use bevy::{prelude::*, sprite::Anchor};
-use sepax2d::prelude::*;
 
 #[derive(Component, Debug)]
 pub struct Player {
@@ -49,6 +50,15 @@ pub struct AnimationIndices {
 }
 
 #[derive(Component)]
+pub struct FollowPlayer;
+
+#[derive(Component)]
+pub struct MainCamera;
+
+#[derive(Component)]
+pub struct MinimapCamera;
+
+#[derive(Component)]
 pub struct Hitbox {
     pub shape: HitboxShape,
 }
@@ -61,6 +71,28 @@ impl Hitbox {
 
 #[derive(Component, Debug)]
 pub struct AnimationTimer(pub Timer);
+
+#[derive(Component)]
+pub struct Tilemap;
+
+#[derive(Bundle)]
+pub struct TilemapBundle {
+    tilemap: Tilemap,
+    mesh: MaterialMesh2dBundle<ColorMaterial>,
+}
+
+impl TilemapBundle {
+    pub fn new(mesh: Handle<Mesh>, material: Handle<ColorMaterial>) -> Self {
+        TilemapBundle {
+            tilemap: Tilemap,
+            mesh: MaterialMesh2dBundle {
+                mesh: Mesh2dHandle(mesh),
+                material,
+                ..default()
+            },
+        }
+    }
+}
 
 #[derive(Bundle)]
 pub struct BulletBundle {

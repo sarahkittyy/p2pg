@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use bevy_ggrs::*;
+use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bytemuck::{Pod, Zeroable};
 
-use crate::component::{InputAngle, Player};
+use crate::component::{InputAngle, MainCamera, Player};
 
 use std::f32::consts::PI;
 
@@ -72,29 +73,35 @@ pub fn input(
     player_handle: In<ggrs::PlayerHandle>,
     keys: Res<Input<KeyCode>>,
     mouse_buttons: Res<Input<MouseButton>>,
-    q_window: Query<&Window>,
-    q_camera: Query<(&Camera, &GlobalTransform)>,
+    q_window: Query<(Entity, &Window)>,
+    q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut q_player: Query<(&Player, &mut InputAngle, &GlobalTransform)>,
+    mut egui_ctx: EguiContexts,
 ) -> PlayerInput {
-    let mut btn = 0u8;
-
-    let window = q_window.single();
+    let (window_entity, window) = q_window.single();
     let (camera, camera_transform) = q_camera.single();
 
-    if keys.pressed(KeyCode::A) {
-        btn |= LEFT;
-    }
-    if keys.pressed(KeyCode::D) {
-        btn |= RIGHT;
-    }
-    if keys.pressed(KeyCode::W) {
-        btn |= UP;
-    }
-    if keys.pressed(KeyCode::S) {
-        btn |= DOWN;
-    }
-    if mouse_buttons.pressed(MouseButton::Left) {
-        btn |= FIRE;
+    let mut btn = 0u8;
+    if window.focused {
+        if keys.pressed(KeyCode::A) {
+            btn |= LEFT;
+        }
+        if keys.pressed(KeyCode::D) {
+            btn |= RIGHT;
+        }
+        if keys.pressed(KeyCode::W) {
+            btn |= UP;
+        }
+        if keys.pressed(KeyCode::S) {
+            btn |= DOWN;
+        }
+        if mouse_buttons.pressed(MouseButton::Left)
+            && !egui_ctx
+                .try_ctx_for_window_mut(window_entity)
+                .is_some_and(|v| v.is_pointer_over_area())
+        {
+            btn |= FIRE;
+        }
     }
 
     let mut angle = 0u8;
