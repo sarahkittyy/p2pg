@@ -1,8 +1,9 @@
 use crate::animation::*;
-use crate::collision::*;
 use bevy::sprite::MaterialMesh2dBundle;
 use bevy::sprite::Mesh2dHandle;
 use bevy::{prelude::*, sprite::Anchor};
+
+pub use crate::collision::Hitbox;
 
 #[derive(Component, Debug)]
 pub struct Player {
@@ -59,13 +60,22 @@ pub struct MainCamera;
 pub struct MinimapCamera;
 
 #[derive(Component)]
-pub struct Hitbox {
-    pub shape: HitboxShape,
+pub struct RigidBody;
+
+#[derive(Bundle)]
+pub struct RigidBodyBundle {
+    marker: RigidBody,
+    hitbox: Hitbox,
+    transform: TransformBundle,
 }
 
-impl Hitbox {
-    pub fn new(shape: HitboxShape) -> Self {
-        Self { shape }
+impl RigidBodyBundle {
+    pub fn new(hitbox: Hitbox) -> Self {
+        Self {
+            marker: RigidBody,
+            hitbox,
+            transform: TransformBundle::default(),
+        }
     }
 }
 
@@ -111,10 +121,10 @@ impl BulletBundle {
                 ..default()
             },
             lifetime: Lifetime(lifetime),
-            hitbox: Hitbox::new(HitboxShape::Circle {
+            hitbox: Hitbox::Circle {
                 pos: Vec2::splat(3.),
                 radius: 2.5,
-            }),
+            },
         }
     }
 }
@@ -147,12 +157,12 @@ impl PlayerBundle {
             indices: PLAYER_STAND_DOWN,
             can_shoot: CanShoot {
                 value: true,
-                since_last: 0,
+                since_last: 999,
             },
-            hitbox: Hitbox::new(HitboxShape::Rect {
+            hitbox: Hitbox::Rect {
                 pos: Vec2::ZERO,
                 half_size: Vec2::splat(4.),
-            }),
+            },
             input_angle: InputAngle(0),
         }
     }

@@ -2,8 +2,10 @@ use bevy::prelude::*;
 use bevy_ggrs::*;
 use bevy_matchbox::prelude::*;
 
-use crate::{input, GameState};
+use crate::component::*;
+use crate::{input, rand::Rng, GameState};
 
+#[derive(Debug)]
 pub struct GgrsConfig;
 impl ggrs::Config for GgrsConfig {
     type Input = input::PlayerInput;
@@ -13,6 +15,43 @@ impl ggrs::Config for GgrsConfig {
 
 #[derive(Resource)]
 pub struct LocalPlayerId(pub usize);
+
+pub struct NetworkingPlugin;
+impl Plugin for NetworkingPlugin {
+    fn build(&self, app: &mut App) {
+        GgrsPlugin::<GgrsConfig>::new()
+            .with_input_system(input::input)
+            .with_update_frequency(60)
+            .register_rollback_component::<Transform>()
+            .register_rollback_component::<CanShoot>()
+            .register_rollback_component::<Velocity>()
+            .register_rollback_component::<Lifetime>()
+            .register_rollback_component::<InputAngle>()
+            .register_rollback_resource::<Rng>()
+            .build(app);
+    }
+}
+
+/// process ggrs events
+pub fn process_ggrs_events(
+    session: Option<ResMut<Session<GgrsConfig>>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    use ggrs::GGRSEvent;
+
+    let Some(mut session) = session else { return; };
+    let Session::P2P(session) = session.as_mut() else { return; };
+    for event in session.events() {
+        info!("GGRS Event: {event:?}");
+        match event {
+            GGRSEvent::Disconnected { .. } => {
+                warn!("Disconneted. Returning to lobby...");
+                next_state.set(GameState::Lobby);
+            }
+            _ => (),
+        }
+    }
+}
 
 /// initialize the matchbox socket
 pub fn setup_socket(mut commands: Commands) {

@@ -21,6 +21,7 @@ mod rand;
 
 use animation::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_matchbox::{prelude::SingleChannel, MatchboxSocket};
 use collision::*;
 use component::*;
 use input::*;
@@ -48,17 +49,6 @@ const BULLET_Z: f32 = 15.;
 fn main() {
     let mut app = App::new();
 
-    GgrsPlugin::<GgrsConfig>::new()
-        .with_input_system(input::input)
-        .with_update_frequency(60)
-        .register_rollback_component::<Transform>()
-        .register_rollback_component::<CanShoot>()
-        .register_rollback_component::<Velocity>()
-        .register_rollback_component::<Lifetime>()
-        .register_rollback_component::<InputAngle>()
-        .register_rollback_resource::<Rng>()
-        .build(&mut app);
-
     app.insert_resource(Msaa::Off)
         .insert_resource(LoadingAssets(vec![]))
         .add_plugins(
@@ -73,34 +63,47 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                .set(AssetPlugin {
+                    asset_folder: "assets".to_owned(),
+                    ..default()
+                }),
         )
         .add_plugins(map::TiledPlugin)
         .add_plugins(SpriteAnimationPlugin)
         .add_plugins(DebugHitboxPlugin)
+        .add_plugins(NetworkingPlugin)
         .add_state::<GameState>()
+        // LOADING
         .add_systems(OnEnter(GameState::Loading), load) // load essential assets
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
         .add_systems(OnExit(GameState::Loading), setup) // pre-connect initialization (camera, bg, etc.)
+        // LOBBY
+        .add_systems(OnEnter(GameState::Lobby), reset_game)
         .add_systems(Update, gui::main_menu.run_if(in_state(GameState::Lobby)))
+        // CONNECTING
         .add_systems(OnEnter(GameState::Connecting), setup_socket)
         .add_systems(
             Update,
-            wait_for_players.run_if(in_state(GameState::Connecting)),
+            (wait_for_players, gui::connecting).run_if(in_state(GameState::Connecting)),
         ) // "lobby" -> waits for other player(s) and then transitions to countdown
         .add_systems(OnExit(GameState::Connecting), spawn_players) // spawn players once connected
+        // COUNTDOWN
         .add_systems(
             GgrsSchedule,
             countdown.run_if(in_state(GameState::Countdown)),
         ) //TODO: pre-game countdown system
+        // COMBAT
         .add_systems(
             GgrsSchedule,
             (
+                move_player,
+                player_terrain_collision,
                 track_player_facing,
                 point_bow,
                 shoot,
-                move_player,
-                bullet_player_collisions,
+                bullet_terrain_collision,
+                bullet_player_collision,
                 reload,
                 move_bullets,
                 despawn_after_lifetime,
@@ -108,10 +111,67 @@ fn main() {
                 .chain()
                 .run_if(in_state(GameState::Combat)),
         ) // synchronized p2p combat system ("the gameplay")
-        .add_systems(Update, (camera_follow, animate_player, animate_bow)) // client-side non-deterministic systems
+        // MISC
+        .add_systems(
+            Update,
+            (
+                camera_follow,
+                animate_player,
+                animate_bow,
+                process_ggrs_events,
+            ),
+        ) // client-side non-deterministic systems
         .add_plugins(EguiPlugin)
         .add_plugins(WorldInspectorPlugin::new())
         .run();
+}
+
+/// destroy bullets that interact with solid terrain
+fn bullet_terrain_collision(
+    mut commands: Commands,
+    q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<RigidBody>)>,
+    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Bullet>)>,
+) {
+    for (b_entity, b_hitbox, b_transform) in &q_bullet {
+        for (r_hitbox, r_transform) in &q_rigidbody {
+            if hitbox_intersects((b_hitbox, &b_transform), (r_hitbox, r_transform)) {
+                commands.entity(b_entity).despawn_recursive();
+            }
+        }
+    }
+}
+
+/// stop players from running into solid terrain
+fn player_terrain_collision(
+    mut q_player: Query<(&Hitbox, &mut Transform), (With<Player>, Without<RigidBody>)>,
+    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Player>)>,
+) {
+    for (p_hitbox, mut p_transform) in &mut q_player {
+        for (r_hitbox, r_transform) in &q_rigidbody {
+            let resolution = hitbox_collision((p_hitbox, &p_transform), (r_hitbox, r_transform));
+            p_transform.translation.x += resolution.x;
+            p_transform.translation.y += resolution.y;
+        }
+    }
+}
+
+fn reset_game(
+    mut commands: Commands,
+    q_player: Query<Entity, With<Player>>,
+    q_bullet: Query<Entity, With<Bullet>>,
+) {
+    // remove all players and bullets
+    for e in &q_player {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &q_bullet {
+        commands.entity(e).despawn_recursive();
+    }
+    // reset rng
+    commands.insert_resource(Rng::new(8008135));
+    // remove any sockets and sessions
+    commands.remove_resource::<MatchboxSocket<SingleChannel>>();
+    commands.remove_resource::<Session<GgrsConfig>>();
 }
 
 fn setup(
@@ -225,7 +285,7 @@ fn countdown(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Combat);
 }
 
-fn bullet_player_collisions(
+fn bullet_player_collision(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<Player>)>,
@@ -233,10 +293,7 @@ fn bullet_player_collisions(
 ) {
     for (_p_entity, p_hitbox, p_transform) in &q_player {
         for (b_entity, b_hitbox, b_transform) in &q_bullet {
-            if hitbox_intersects(
-                (&p_hitbox.shape, p_transform),
-                (&b_hitbox.shape, b_transform),
-            ) {
+            if hitbox_intersects((p_hitbox, p_transform), (b_hitbox, b_transform)) {
                 commands.entity(b_entity).despawn();
                 commands.spawn(AudioBundle {
                     source: asset_server.load("sfx/Damage_1.wav"),

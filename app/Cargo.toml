@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy_matchbox = { git = "https://github.com/johanhelsing/matchbox", branch = "main", features = ["ggrs"] }
+bevy_matchbox = { git = "https://github.com/johanhelsing/matchbox", branch = "unwrap-healing", features = ["ggrs"] }
 bevy = { version = "0.11", features = ["mp3", "wav"] }
 bevy_ggrs = { git = "https://github.com/gschup/bevy_ggrs", branch = "main" }
 bevy_egui = { version = "0.21" }

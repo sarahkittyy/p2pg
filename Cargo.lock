@@ -1088,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "bevy_matchbox"
 version = "0.6.0"
-source = "git+https://github.com/johanhelsing/matchbox?branch=main#9ad07f58bbcd4fa028a7fa72f2f4c96244943755"
+source = "git+https://github.com/johanhelsing/matchbox?branch=unwrap-healing#8589cbeaa4b7cb0a2738990c6fa5550652f266ab"
 dependencies = [
  "bevy",
  "cfg-if 1.0.0",
@@ -3419,7 +3419,7 @@ dependencies = [
 [[package]]
 name = "matchbox_protocol"
 version = "0.6.0"
-source = "git+https://github.com/johanhelsing/matchbox?branch=main#9ad07f58bbcd4fa028a7fa72f2f4c96244943755"
+source = "git+https://github.com/johanhelsing/matchbox?branch=unwrap-healing#8589cbeaa4b7cb0a2738990c6fa5550652f266ab"
 dependencies = [
  "cfg-if 1.0.0",
  "derive_more",
@@ -3430,7 +3430,7 @@ dependencies = [
 [[package]]
 name = "matchbox_socket"
 version = "0.6.1"
-source = "git+https://github.com/johanhelsing/matchbox?branch=main#9ad07f58bbcd4fa028a7fa72f2f4c96244943755"
+source = "git+https://github.com/johanhelsing/matchbox?branch=unwrap-healing#8589cbeaa4b7cb0a2738990c6fa5550652f266ab"
 dependencies = [
  "async-compat",
  "async-trait",
