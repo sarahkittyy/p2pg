@@ -1,6 +1,4 @@
 use crate::animation::*;
-use bevy::sprite::MaterialMesh2dBundle;
-use bevy::sprite::Mesh2dHandle;
 use bevy::{prelude::*, sprite::Anchor};
 
 pub use crate::collision::Hitbox;
@@ -84,25 +82,6 @@ pub struct AnimationTimer(pub Timer);
 
 #[derive(Component)]
 pub struct Tilemap;
-
-#[derive(Bundle)]
-pub struct TilemapBundle {
-    tilemap: Tilemap,
-    mesh: MaterialMesh2dBundle<ColorMaterial>,
-}
-
-impl TilemapBundle {
-    pub fn new(mesh: Handle<Mesh>, material: Handle<ColorMaterial>) -> Self {
-        TilemapBundle {
-            tilemap: Tilemap,
-            mesh: MaterialMesh2dBundle {
-                mesh: Mesh2dHandle(mesh),
-                material,
-                ..default()
-            },
-        }
-    }
-}
 
 #[derive(Bundle)]
 pub struct BulletBundle {

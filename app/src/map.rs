@@ -1,19 +1,127 @@
 use std::{io::Cursor, path::Path, sync::Arc};
 
+use crate::component::Tilemap;
 use anyhow::anyhow;
 use bevy::{
     asset::{AssetLoader, LoadedAsset},
+    math::Vec3A,
     prelude::*,
     reflect::{TypePath, TypeUuid},
-    render::{mesh::Indices, render_resource::PrimitiveTopology},
+    render::{mesh::Indices, primitives::Aabb, render_resource::PrimitiveTopology},
+    sprite::{MaterialMesh2dBundle, Mesh2dHandle},
 };
 use tiled;
+
+pub struct TiledPlugin;
+impl Plugin for TiledPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_asset::<TiledMap>()
+            .add_asset_loader(TiledLoader)
+            .add_systems(Update, tilemap_initializer);
+    }
+}
 
 #[derive(Clone, TypeUuid, TypePath, Debug)]
 #[uuid = "1c3fd034-5b2b-43b5-b878-45849790549e"]
 pub struct TiledMap(pub tiled::Map);
 
-fn tile_to_uvs(id: u32, image_size: Vec2, tile_size: Vec2) -> [[f32; 2]; 4] {
+#[derive(Bundle)]
+struct TilemapBundle {
+    tilemap: Tilemap,
+    aabb: Aabb,
+    spatial: SpatialBundle,
+}
+
+#[derive(Component)]
+struct TilemapLoader {
+    path: String,
+}
+
+#[derive(Bundle)]
+pub struct TilemapLoaderBundle {
+    loader: TilemapLoader,
+}
+
+impl TilemapLoaderBundle {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            loader: TilemapLoader { path: path.into() },
+        }
+    }
+}
+
+fn tilemap_initializer(
+    mut commands: Commands,
+    q_loader: Query<(Entity, &TilemapLoader, Option<&Transform>)>,
+    asset_server: Res<AssetServer>,
+    maps: Res<Assets<TiledMap>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (entity, loader, transform) in &q_loader {
+        // wait for the tile map to be loaded...
+        let tiledmap_handle: Handle<TiledMap> = asset_server.load(&loader.path);
+        let Some(TiledMap(map)) = maps.get(&tiledmap_handle) else { continue; };
+
+        // fetch the tileset image
+        let tileset = map.tilesets().first().expect("Tileset not found...");
+        let image = tileset
+            .image
+            .as_ref()
+            .expect("Tileset has no associated image.");
+        let tileset_handle = asset_server.load(image.source.clone());
+
+        // tileset image material
+        let material = ColorMaterial {
+            texture: Some(tileset_handle.clone()),
+            color: Color::WHITE,
+        };
+        let material_handle = materials.add(material);
+
+        // parent tilemap entity
+        let tilemap_entity = commands
+            .spawn(TilemapBundle {
+                tilemap: Tilemap,
+                aabb: tilemap_aabb(map),
+                spatial: SpatialBundle::from_transform(transform.cloned().unwrap_or_default()),
+            })
+            .id();
+
+        // create a mesh entity for each layer
+        for layer in map.layers() {
+            let Some(layer) = layer.as_tile_layer() else { continue; };
+
+            let mesh = layer_to_mesh(map, &layer, tileset.as_ref());
+            let mesh_handle = meshes.add(mesh);
+
+            let layer_mesh_entity = commands
+                .spawn(MaterialMesh2dBundle {
+                    mesh: Mesh2dHandle(mesh_handle.clone()),
+                    material: material_handle.clone(),
+                    ..default()
+                })
+                .id();
+            commands.entity(tilemap_entity).add_child(layer_mesh_entity);
+        }
+
+        // despawn the loader
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn tilemap_aabb(map: &tiled::Map) -> Aabb {
+    let xs = (map.width * map.tile_width) as f32;
+    let ys = (map.height * map.tile_height) as f32;
+    let halfsize = Vec2::new(xs / 2., ys / 2.);
+    Aabb {
+        center: halfsize.extend(0.).into(),
+        half_extents: halfsize.extend(0.).into(),
+    }
+}
+
+fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f32; 2]; 4] {
+    let id = tile.id() as u32;
+
     // columns in the tileset
     let columns = (image_size.x / tile_size.x).round() as u32;
     // xy position of the tile in the tileset
@@ -38,7 +146,7 @@ fn tile_to_uvs(id: u32, image_size: Vec2, tile_size: Vec2) -> [[f32; 2]; 4] {
     uvs
 }
 
-pub fn tilemap_to_mesh(map: &tiled::Map) -> Mesh {
+pub fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Tileset) -> Mesh {
     //NOTE: tiled renders right-down, but bevy is right-up (y is flipped)
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
 
@@ -49,10 +157,6 @@ pub fn tilemap_to_mesh(map: &tiled::Map) -> Mesh {
     let mut uvs: Vec<[f32; 2]> = vec![];
     let mut indices: Vec<u32> = vec![];
 
-    let tileset = map
-        .tilesets()
-        .first()
-        .expect("Expected at least one tileset in the map");
     let image = tileset
         .image
         .as_ref()
@@ -61,28 +165,23 @@ pub fn tilemap_to_mesh(map: &tiled::Map) -> Mesh {
     let tile_size = Vec2::new(map.tile_width as f32, map.tile_height as f32);
     let tileset_tile_size = Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32);
 
-    for layer in map.layers() {
-        // we only care about tile layers right now
-        let Some(layer) = layer.as_tile_layer() else { continue };
+    let width = layer.width().unwrap();
+    let height = layer.height().unwrap();
 
-        let width = layer.width().unwrap();
-        let height = layer.height().unwrap();
+    // generate the mesh data for each tile
+    for x in 0..width {
+        for y in 0..height {
+            //										 v since our y = 0 is tiled's y = 49
+            let Some(tile) = layer.get_tile(x as i32, (height - y - 1) as i32) else { continue; };
+            let (xf, yf) = (x as f32, y as f32);
 
-        // generate the mesh data for each tile
-        for x in 0..width {
-            for y in 0..height {
-                //										 v since our y = 0 is tiled's y = 49
-                let Some(tile) = layer.get_tile(x as i32, (height - y - 1) as i32) else { continue; };
-                let (xf, yf) = (x as f32, y as f32);
-
-                let [a, b, c, d] =
-                    quad.map(|[xp, yp, zp]| [(xp + xf) * tile_size.x, (yp + yf) * tile_size.y, zp]);
-                let vc = positions.len() as u32;
-                positions.extend([a, b, c, d]);
-                normals.extend(vec![[0., 0., 1.]; 4]);
-                indices.extend([0, 1, 2, 2, 3, 0].map(|i| i + vc));
-                uvs.extend(tile_to_uvs(tile.id() as u32, image_size, tileset_tile_size));
-            }
+            let [a, b, c, d] =
+                quad.map(|[xp, yp, zp]| [(xp + xf) * tile_size.x, (yp + yf) * tile_size.y, zp]);
+            let vc = positions.len() as u32;
+            positions.extend([a, b, c, d]);
+            normals.extend(vec![[0., 0., 1.]; 4]);
+            indices.extend([0, 1, 2, 2, 3, 0].map(|i| i + vc));
+            uvs.extend(tile_to_uvs(tile, image_size, tileset_tile_size));
         }
     }
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -90,13 +189,6 @@ pub fn tilemap_to_mesh(map: &tiled::Map) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.set_indices(Some(Indices::U32(indices)));
     mesh
-}
-
-pub struct TiledPlugin;
-impl Plugin for TiledPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_asset::<TiledMap>().add_asset_loader(TiledLoader);
-    }
 }
 
 struct BytesResourceReader {

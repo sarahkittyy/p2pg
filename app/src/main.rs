@@ -4,8 +4,12 @@ use bevy::{
     asset::LoadState,
     audio::Volume,
     audio::{PlaybackMode, VolumeLevel},
+    core_pipeline::clear_color::ClearColorConfig,
     prelude::*,
-    render::{camera::ScalingMode, primitives::Aabb},
+    render::{
+        camera::{ScalingMode, Viewport},
+        primitives::Aabb,
+    },
 };
 use bevy_egui::EguiPlugin;
 use bevy_ggrs::*;
@@ -42,9 +46,9 @@ pub enum GameState {
 #[derive(Resource)]
 struct LoadingAssets(Vec<HandleUntyped>);
 
-const MAP_Z: f32 = 0.;
-const PLAYER_Z: f32 = 10.;
-const BULLET_Z: f32 = 15.;
+pub const MAP_Z: f32 = 0.;
+pub const PLAYER_Z: f32 = 10.;
+pub const BULLET_Z: f32 = 15.;
 
 fn main() {
     let mut app = App::new();
@@ -174,13 +178,7 @@ fn reset_game(
     commands.remove_resource::<Session<GgrsConfig>>();
 }
 
-fn setup(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    maps: Res<Assets<TiledMap>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
+fn setup(mut commands: Commands) {
     let ideal_aspect_ratio = 16f32 / 9.;
     let max_width = 16. * 25.;
     let max_height = max_width / ideal_aspect_ratio;
@@ -201,65 +199,34 @@ fn setup(
                 order: 0,
                 ..default()
             },
+            camera_2d: Camera2d {
+                clear_color: ClearColorConfig::Custom(Color::BLACK),
+            },
             ..default()
         })
         .insert(FollowPlayer);
 
-    // minimap camera ( BORKED ! )
-    // https://github.com/bevyengine/bevy/issues/9340
-    /*commands.spawn(MinimapCamera).insert(Camera2dBundle {
-        projection: OrthographicProjection {
-            scaling_mode: ScalingMode::Fixed { width: 100., height: 100. },
-            ..default()
-        },
-        camera: Camera {
-            viewport: Some(Viewport {
-                physical_size: UVec2::splat(100),
-                ..default()
-            }),
-            order: 1,
-            ..default()
-        },
-        ..default()
-    }).insert(FollowPlayer);*/
-
-    // spawn the background tilemap
-    let tilemap = &maps.get(&asset_server.load("basic.tmx")).unwrap().0;
-    let mesh = map::tilemap_to_mesh(tilemap);
-    let mesh_handle = meshes.add(mesh);
-    let tileset_handle = asset_server.load("OverworldTileset_v03.png");
-    let material = ColorMaterial {
-        texture: Some(tileset_handle),
-        color: Color::WHITE,
-    };
-    let material_handle = materials.add(material);
-
+    // load the tilemap
     commands
-        .spawn(TilemapBundle::new(mesh_handle, material_handle))
-        .insert(
-            Transform::from_scale(Vec3::splat(0.5))
-                .with_translation((-16. * 25., -16. * 25., MAP_Z).into()),
-        );
+        .spawn(TilemapLoaderBundle::new("snowy.tmx"))
+        .insert(Transform::from_translation(
+            (-16. * 25., -16. * 25., MAP_Z).into(),
+        ));
 }
 
 fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
-    let tileset: Handle<Image> = asset_server.load("OverworldTileset_v03.png");
-    let tilemap: Handle<TiledMap> = asset_server.load("basic.tmx");
-    let player: Handle<Image> = asset_server.load("Archer.png");
-    let arrow: Handle<Image> = asset_server.load("arrow.png");
-    let bow: Handle<Image> = asset_server.load("bow.png");
-    let bow_charge: Handle<AudioSource> = asset_server.load("sfx/Bow_Charge.wav");
-    let bow_release: Handle<AudioSource> = asset_server.load("sfx/Bow_Release.wav");
-    let damage: Handle<AudioSource> = asset_server.load("sfx/Damage_1.wav");
-
-    loading.0.push(tileset.clone_untyped());
-    loading.0.push(tilemap.clone_untyped());
-    loading.0.push(player.clone_untyped());
-    loading.0.push(arrow.clone_untyped());
-    loading.0.push(bow.clone_untyped());
-    loading.0.push(bow_charge.clone_untyped());
-    loading.0.push(bow_release.clone_untyped());
-    loading.0.push(damage.clone_untyped());
+    [
+        "Archer.png",
+        "arrow.png",
+        "bow.png",
+        "sfx/Bow_Charge.wav",
+        "sfx/Bow_Release.wav",
+        "sfx/Damage_1.wav",
+    ]
+    .into_iter()
+    .for_each(|asset| {
+        loading.0.push(asset_server.load_untyped(asset));
+    });
 }
 
 fn check_load(
@@ -549,4 +516,31 @@ fn spawn_players(
                 .add_rollback();
         })
         .add_rollback();
+}
+
+fn _spawn_minimap_camera(mut commands: Commands) {
+    commands
+        .spawn(MinimapCamera)
+        .insert(Camera2dBundle {
+            projection: OrthographicProjection {
+                scaling_mode: ScalingMode::Fixed {
+                    width: 400.,
+                    height: 400.,
+                },
+                ..default()
+            },
+            camera: Camera {
+                viewport: Some(Viewport {
+                    physical_size: UVec2::splat(100),
+                    ..default()
+                }),
+                order: 1,
+                ..default()
+            },
+            camera_2d: Camera2d {
+                clear_color: ClearColorConfig::None,
+            },
+            ..default()
+        })
+        .insert(FollowPlayer);
 }
