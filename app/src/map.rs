@@ -211,22 +211,42 @@ fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f
     tile_uv0 += epsilon;
     tile_uv_size -= epsilon;
 
-    // clockwise uvs
-    let uvs = [
-        [0., 0.],
+    // ccw uvs
+    let [a, b, c, d] = [
         [0., tile_uv_size.y],
         [tile_uv_size.x, tile_uv_size.y],
         [tile_uv_size.x, 0.],
+        [0., 0.],
     ] // a single uv quad at 0, 0
     .map(|[uvx, uvy]| [uvx + tile_uv0.x, uvy + tile_uv0.y]); // translated to uv0
-    uvs
+
+    let [a, b, c, d] = if tile.flip_d {
+        [c, b, a, d]
+    } else {
+        [a, b, c, d]
+    };
+
+    let [a, b, c, d] = if tile.flip_v {
+        [d, c, b, a]
+    } else {
+        [a, b, c, d]
+    };
+
+    let [a, b, c, d] = if tile.flip_h {
+        [b, a, d, c]
+    } else {
+        [a, b, c, d]
+    };
+
+    [a, b, c, d]
 }
 
 fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Tileset) -> Mesh {
     //NOTE: tiled renders right-down, but bevy is right-up (y is flipped)
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
 
-    let quad: [[f32; 3]; 4] = [[0., 1., 0.], [0., 0., 0.], [1., 0., 0.], [1., 1., 0.]];
+    // ccw vertices
+    let quad: [[f32; 3]; 4] = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
 
     let mut positions: Vec<[f32; 3]> = vec![];
     let mut normals: Vec<[f32; 3]> = vec![];
@@ -247,9 +267,8 @@ fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Ti
     // generate the mesh data for each tile
     for x in 0..width {
         for y in 0..height {
-            let bevy_y = height - y - 1;
-            //										 v since our y = 0 is tiled's y = 49
-            let Some(tile) = layer.get_tile(x as i32, bevy_y as i32) else { continue; };
+            let Some(tile) = layer.get_tile(x as i32, y as i32) else { continue; };
+            let y = height - y - 1;
             let (xf, yf) = (x as f32, y as f32);
 
             let [a, b, c, d] =
