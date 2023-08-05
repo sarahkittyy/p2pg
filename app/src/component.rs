@@ -72,6 +72,9 @@ pub struct WallContactState {
     pub right: bool,
 }
 
+#[derive(Component)]
+pub struct Spawnpoint(pub Vec2);
+
 #[derive(Bundle)]
 pub struct BulletBundle {
     bullet: Bullet,
@@ -114,6 +117,8 @@ pub struct PlayerBundle {
 
 impl PlayerBundle {
     pub fn new(id: usize, atlas: Handle<TextureAtlas>) -> Self {
+        const SIZE: f32 = 4.1;
+        const E: f32 = 0.05;
         Self {
             player: Player { id },
             sprite: SpriteSheetBundle {
@@ -131,24 +136,24 @@ impl PlayerBundle {
             },
             hitbox: Hitbox::Rect {
                 offset: Vec2::ZERO,
-                half_size: Vec2::splat(4.3),
+                half_size: Vec2::splat(SIZE),
             },
             wall_sensors: WallSensors {
                 up: Hitbox::Rect {
-                    offset: Vec2::Y * 4.3,
-                    half_size: Vec2::new(4.25, 0.05),
+                    offset: Vec2::Y * SIZE,
+                    half_size: Vec2::new(SIZE - E, E),
                 },
                 down: Hitbox::Rect {
-                    offset: Vec2::NEG_Y * 4.3,
-                    half_size: Vec2::new(4.25, 0.05),
+                    offset: Vec2::NEG_Y * SIZE,
+                    half_size: Vec2::new(SIZE - E, E),
                 },
                 left: Hitbox::Rect {
-                    offset: Vec2::NEG_X * 4.3,
-                    half_size: Vec2::new(0.05, 4.25),
+                    offset: Vec2::NEG_X * SIZE,
+                    half_size: Vec2::new(E, SIZE - E),
                 },
                 right: Hitbox::Rect {
-                    offset: Vec2::X * 4.3,
-                    half_size: Vec2::new(0.05, 4.25),
+                    offset: Vec2::X * SIZE,
+                    half_size: Vec2::new(E, SIZE - E),
                 },
             },
             wall_contact_state: WallContactState::default(),

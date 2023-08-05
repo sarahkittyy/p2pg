@@ -3,6 +3,7 @@ use std::{io::Cursor, path::Path, sync::Arc};
 use crate::{
     collision::{Hitbox, RigidBodyBundle},
     component::Tilemap,
+    MAP_FG_Z,
 };
 use anyhow::anyhow;
 use bevy::{
@@ -35,7 +36,7 @@ struct TilemapBundle {
 }
 
 #[derive(Component)]
-struct TilemapLoader {
+pub struct TilemapLoader {
     path: String,
 }
 
@@ -97,10 +98,17 @@ fn tilemap_initializer(
                     let mesh = layer_to_mesh(map, &layer, tileset.as_ref());
                     let mesh_handle = meshes.add(mesh);
 
+                    let z = if layer_type.is_some_and(|s| s == "foreground") {
+                        MAP_FG_Z
+                    } else {
+                        0.
+                    };
+
                     let layer_mesh_entity = commands
                         .spawn(MaterialMesh2dBundle {
                             mesh: Mesh2dHandle(mesh_handle.clone()),
                             material: material_handle.clone(),
+                            transform: Transform::from_xyz(0., 0., z),
                             ..default()
                         })
                         .id();
@@ -116,6 +124,7 @@ fn tilemap_initializer(
                                 .id();
                             commands.entity(tilemap_entity).add_child(body);
                         });
+                    } else if layer_type.is_some_and(|v| v == "spawns") {
                     }
                 }
                 _ => (),
@@ -143,6 +152,20 @@ fn layer_to_collision(map: &tiled::Map, layer: &tiled::ObjectLayer) -> Vec<(Hitb
                     Hitbox::Rect {
                         offset: Vec2::ZERO,
                         half_size: size / 2.,
+                    },
+                    Transform::from_translation(center.extend(0.)),
+                ));
+            }
+            tiled::ObjectShape::Ellipse { width, height } => {
+                if width != height {
+                    warn!("tilemap contains non-circular collision box");
+                }
+                let radius = width / 2.;
+                let center = Vec2::new(pos.x + radius, pos.y - radius);
+                hitboxes.push((
+                    Hitbox::Circle {
+                        offset: Vec2::ZERO,
+                        radius,
                     },
                     Transform::from_translation(center.extend(0.)),
                 ));

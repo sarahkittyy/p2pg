@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use sepax2d::prelude::*;
 
+use crate::DebugState;
+
 #[derive(Clone, Copy, Debug, Component, Reflect)]
 pub enum Hitbox {
     Rect { offset: Vec2, half_size: Vec2 },
@@ -81,7 +83,10 @@ impl Plugin for DebugHitboxPlugin {
             ..default()
         })
         .register_type::<Hitbox>()
-        .add_systems(Update, collision_debug_draw);
+        .add_systems(
+            Update,
+            collision_debug_draw.run_if(in_state(DebugState::On)),
+        );
     }
 }
 

@@ -43,12 +43,20 @@ pub enum GameState {
     Combat,
 }
 
+#[derive(States, Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum DebugState {
+    On,
+    #[default]
+    Off,
+}
+
 #[derive(Resource)]
 struct LoadingAssets(Vec<HandleUntyped>);
 
 pub const MAP_Z: f32 = 0.;
 pub const PLAYER_Z: f32 = 10.;
 pub const BULLET_Z: f32 = 15.;
+pub const MAP_FG_Z: f32 = 20.;
 
 fn main() {
     let mut app = App::new();
@@ -79,6 +87,7 @@ fn main() {
         .add_plugins(DebugHitboxPlugin)
         .add_plugins(NetworkingPlugin)
         .add_state::<GameState>()
+        .add_state::<DebugState>()
         // LOADING
         .add_systems(OnEnter(GameState::Loading), load) // load essential assets
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
@@ -121,16 +130,30 @@ fn main() {
         .add_systems(
             Update,
             (
+                toggle_debug,
                 camera_follow,
                 animate_player,
                 animate_bow,
                 process_ggrs_events,
-                //gui::fps_display,
+                gui::fps_display.run_if(in_state(DebugState::On)),
             ),
         ) // client-side non-deterministic systems
         .add_plugins(EguiPlugin)
-        .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(WorldInspectorPlugin::new().run_if(in_state(DebugState::On)))
         .run();
+}
+
+fn toggle_debug(
+    state: Res<State<DebugState>>,
+    mut next_state: ResMut<NextState<DebugState>>,
+    keys: Res<Input<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::Slash) {
+        next_state.set(match state.get() {
+            DebugState::Off => DebugState::On,
+            DebugState::On => DebugState::Off,
+        });
+    }
 }
 
 /// destroy bullets that interact with solid terrain
@@ -214,6 +237,26 @@ fn setup(mut commands: Commands) {
             ..default()
         })
         .insert(FollowPlayer);
+}
+
+fn load(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut loading: ResMut<LoadingAssets>,
+) {
+    [
+        "Archer.png",
+        "arrow.png",
+        "bow.png",
+        "sfx/Bow_Release.wav",
+        "sfx/Damage_1.wav",
+        "snowy.tmx",
+        "tilesets/Set_A_Darkwoods1.png",
+    ]
+    .into_iter()
+    .for_each(|asset| {
+        loading.0.push(asset_server.load_untyped(asset));
+    });
 
     // load the tilemap
     commands
@@ -223,36 +266,27 @@ fn setup(mut commands: Commands) {
         ));
 }
 
-fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
-    [
-        "Archer.png",
-        "arrow.png",
-        "bow.png",
-        "sfx/Bow_Release.wav",
-        "sfx/Damage_1.wav",
-    ]
-    .into_iter()
-    .for_each(|asset| {
-        loading.0.push(asset_server.load_untyped(asset));
-    });
-}
-
 fn check_load(
     loading: Res<LoadingAssets>,
     asset_server: Res<AssetServer>,
     mut _commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
+    q_tilemap_loaders: Query<&TilemapLoader>,
 ) {
-    match asset_server.get_group_load_state(loading.0.iter().map(|h| h.id())) {
-        LoadState::Failed => {
-            panic!("Could not load assets...");
-        }
-        LoadState::Loaded => {
-            next_state.set(GameState::Lobby);
-        }
-        _ => {
-            info!("Loading assets...");
-        }
+    let assets_loaded: bool =
+        match asset_server.get_group_load_state(loading.0.iter().map(|h| h.id())) {
+            LoadState::Failed => {
+                panic!("Could not load assets...");
+            }
+            LoadState::Loaded => true,
+            _ => {
+                info!("Loading assets...");
+                false
+            }
+        };
+    let tilemaps_loaded: bool = q_tilemap_loaders.is_empty();
+    if assets_loaded && tilemaps_loaded {
+        next_state.set(GameState::Lobby);
     }
 }
 
