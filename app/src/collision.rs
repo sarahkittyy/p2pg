@@ -1,46 +1,74 @@
 use bevy::prelude::*;
 use sepax2d::prelude::*;
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, Component, Reflect)]
 pub enum Hitbox {
-    Rect { pos: Vec2, half_size: Vec2 },
-    Circle { pos: Vec2, radius: f32 },
+    Rect { offset: Vec2, half_size: Vec2 },
+    Circle { offset: Vec2, radius: f32 },
 }
 
 impl Hitbox {
     pub fn with_transform(&self, transform: &Transform) -> Hitbox {
         match self {
-            Hitbox::Rect { pos, half_size } => {
-                let pos = transform.transform_point(pos.extend(0.)).truncate();
+            Hitbox::Rect { offset, half_size } => {
+                let offset = transform.transform_point(offset.extend(0.)).truncate();
                 let half_size = Vec2 {
                     x: transform.scale.x * half_size.x,
                     y: transform.scale.y * half_size.y,
                 };
-                Hitbox::Rect { pos, half_size }
+                Hitbox::Rect { offset, half_size }
             }
-            Hitbox::Circle { pos, radius } => {
-                let pos = transform.transform_point(pos.extend(0.)).truncate();
+            Hitbox::Circle { offset, radius } => {
+                let offset = transform.transform_point(offset.extend(0.)).truncate();
                 let scale = transform.scale.max_element();
                 let radius = radius * scale;
-                Hitbox::Circle { pos, radius }
+                Hitbox::Circle { offset, radius }
             }
         }
     }
 
     pub fn into_sepax(&self) -> Box<dyn Shape> {
         match self {
-            Hitbox::Rect { pos, half_size } => {
-                let top_left = *pos - *half_size;
+            Hitbox::Rect { offset, half_size } => {
+                let top_left = *offset - *half_size;
                 Box::new(AABB {
                     position: (top_left.x, top_left.y),
                     width: half_size.x * 2.,
                     height: half_size.y * 2.,
                 })
             }
-            Hitbox::Circle { pos, radius } => Box::new(Circle {
-                position: (pos.x, pos.y),
+            Hitbox::Circle { offset, radius } => Box::new(Circle {
+                position: (offset.x, offset.y),
                 radius: *radius,
             }),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct WallSensors {
+    pub up: Hitbox,
+    pub down: Hitbox,
+    pub left: Hitbox,
+    pub right: Hitbox,
+}
+
+#[derive(Component)]
+pub struct RigidBody;
+
+#[derive(Bundle)]
+pub struct RigidBodyBundle {
+    marker: RigidBody,
+    hitbox: Hitbox,
+    transform: TransformBundle,
+}
+
+impl RigidBodyBundle {
+    pub fn new(hitbox: Hitbox) -> Self {
+        Self {
+            marker: RigidBody,
+            hitbox,
+            transform: TransformBundle::IDENTITY,
         }
     }
 }
@@ -52,18 +80,19 @@ impl Plugin for DebugHitboxPlugin {
             depth_bias: -1.,
             ..default()
         })
+        .register_type::<Hitbox>()
         .add_systems(Update, collision_debug_draw);
     }
 }
 
-fn collision_debug_draw(mut gizmos: Gizmos, query: Query<(&Hitbox, &Transform)>) {
-    for (hitbox, transform) in &query {
-        match hitbox.with_transform(transform) {
-            Hitbox::Circle { pos, radius } => {
-                gizmos.circle_2d(pos, radius, Color::RED);
+fn collision_debug_draw(mut gizmos: Gizmos, q_hitbox: Query<(&Hitbox, &GlobalTransform)>) {
+    for (hitbox, transform) in &q_hitbox {
+        match hitbox.with_transform(&transform.compute_transform()) {
+            Hitbox::Circle { offset, radius } => {
+                gizmos.circle_2d(offset, radius, Color::RED);
             }
-            Hitbox::Rect { pos, half_size } => {
-                gizmos.rect_2d(pos, 0., half_size * 2., Color::RED);
+            Hitbox::Rect { offset, half_size } => {
+                gizmos.rect_2d(offset, 0., half_size * 2., Color::RED);
             }
         }
     }

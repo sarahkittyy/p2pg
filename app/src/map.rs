@@ -1,10 +1,12 @@
 use std::{io::Cursor, path::Path, sync::Arc};
 
-use crate::component::Tilemap;
+use crate::{
+    collision::{Hitbox, RigidBodyBundle},
+    component::Tilemap,
+};
 use anyhow::anyhow;
 use bevy::{
     asset::{AssetLoader, LoadedAsset},
-    math::Vec3A,
     prelude::*,
     reflect::{TypePath, TypeUuid},
     render::{mesh::Indices, primitives::Aabb, render_resource::PrimitiveTopology},
@@ -87,21 +89,37 @@ fn tilemap_initializer(
             })
             .id();
 
-        // create a mesh entity for each layer
+        // process each map layer
         for layer in map.layers() {
-            let Some(layer) = layer.as_tile_layer() else { continue; };
+            let layer_type = layer.user_type.as_deref();
+            match layer.layer_type() {
+                tiled::LayerType::Tiles(layer) => {
+                    let mesh = layer_to_mesh(map, &layer, tileset.as_ref());
+                    let mesh_handle = meshes.add(mesh);
 
-            let mesh = layer_to_mesh(map, &layer, tileset.as_ref());
-            let mesh_handle = meshes.add(mesh);
-
-            let layer_mesh_entity = commands
-                .spawn(MaterialMesh2dBundle {
-                    mesh: Mesh2dHandle(mesh_handle.clone()),
-                    material: material_handle.clone(),
-                    ..default()
-                })
-                .id();
-            commands.entity(tilemap_entity).add_child(layer_mesh_entity);
+                    let layer_mesh_entity = commands
+                        .spawn(MaterialMesh2dBundle {
+                            mesh: Mesh2dHandle(mesh_handle.clone()),
+                            material: material_handle.clone(),
+                            ..default()
+                        })
+                        .id();
+                    commands.entity(tilemap_entity).add_child(layer_mesh_entity);
+                }
+                tiled::LayerType::Objects(layer) => {
+                    if layer_type.is_some_and(|v| v == "collision") {
+                        let hitboxes = layer_to_collision(&map, &layer);
+                        hitboxes.into_iter().for_each(|(hitbox, transform)| {
+                            let body = commands
+                                .spawn(RigidBodyBundle::new(hitbox))
+                                .insert(transform)
+                                .id();
+                            commands.entity(tilemap_entity).add_child(body);
+                        });
+                    }
+                }
+                _ => (),
+            }
         }
 
         // despawn the loader
@@ -109,14 +127,48 @@ fn tilemap_initializer(
     }
 }
 
+fn layer_to_collision(map: &tiled::Map, layer: &tiled::ObjectLayer) -> Vec<(Hitbox, Transform)> {
+    let mut hitboxes = vec![];
+
+    let map_size = map_size(map);
+
+    for object in layer.objects() {
+        let mut pos = Vec2::new(object.x, object.y); // top left point in right-down coordinates
+        pos.y = map_size.y - pos.y - 1.; // top left point in right-up coordinates
+        match object.shape {
+            tiled::ObjectShape::Rect { width, height } => {
+                let size = Vec2::new(width, height);
+                let center = Vec2::new(pos.x + size.x / 2., pos.y - size.y / 2.);
+                hitboxes.push((
+                    Hitbox::Rect {
+                        offset: Vec2::ZERO,
+                        half_size: size / 2.,
+                    },
+                    Transform::from_translation(center.extend(0.)),
+                ));
+            }
+            _ => (),
+        }
+    }
+
+    hitboxes
+}
+
 fn tilemap_aabb(map: &tiled::Map) -> Aabb {
-    let xs = (map.width * map.tile_width) as f32;
-    let ys = (map.height * map.tile_height) as f32;
-    let halfsize = Vec2::new(xs / 2., ys / 2.);
+    let halfsize = map_size(map) / 2.;
     Aabb {
         center: halfsize.extend(0.).into(),
         half_extents: halfsize.extend(0.).into(),
     }
+}
+
+/// size of a tiled map, in pixels
+fn map_size(map: &tiled::Map) -> Vec2 {
+    UVec2 {
+        x: map.tile_width * map.width,
+        y: map.tile_height * map.height,
+    }
+    .as_vec2()
 }
 
 fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f32; 2]; 4] {
@@ -136,6 +188,7 @@ fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f
     tile_uv0 += epsilon;
     tile_uv_size -= epsilon;
 
+    // clockwise uvs
     let uvs = [
         [0., 0.],
         [0., tile_uv_size.y],
@@ -146,7 +199,7 @@ fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f
     uvs
 }
 
-pub fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Tileset) -> Mesh {
+fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Tileset) -> Mesh {
     //NOTE: tiled renders right-down, but bevy is right-up (y is flipped)
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
 
@@ -171,8 +224,9 @@ pub fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled
     // generate the mesh data for each tile
     for x in 0..width {
         for y in 0..height {
+            let bevy_y = height - y - 1;
             //										 v since our y = 0 is tiled's y = 49
-            let Some(tile) = layer.get_tile(x as i32, (height - y - 1) as i32) else { continue; };
+            let Some(tile) = layer.get_tile(x as i32, bevy_y as i32) else { continue; };
             let (xf, yf) = (x as f32, y as f32);
 
             let [a, b, c, d] =

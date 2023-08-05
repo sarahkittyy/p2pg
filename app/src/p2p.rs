@@ -27,6 +27,7 @@ impl Plugin for NetworkingPlugin {
             .register_rollback_component::<Velocity>()
             .register_rollback_component::<Lifetime>()
             .register_rollback_component::<InputAngle>()
+            .register_rollback_component::<WallContactState>()
             .register_rollback_resource::<Rng>()
             .build(app);
     }

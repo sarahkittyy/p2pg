@@ -1,7 +1,8 @@
-use crate::animation::*;
+use crate::{
+    animation::*,
+    collision::{Hitbox, WallSensors},
+};
 use bevy::{prelude::*, sprite::Anchor};
-
-pub use crate::collision::Hitbox;
 
 #[derive(Component, Debug)]
 pub struct Player {
@@ -57,31 +58,19 @@ pub struct MainCamera;
 #[derive(Component)]
 pub struct MinimapCamera;
 
-#[derive(Component)]
-pub struct RigidBody;
-
-#[derive(Bundle)]
-pub struct RigidBodyBundle {
-    marker: RigidBody,
-    hitbox: Hitbox,
-    transform: TransformBundle,
-}
-
-impl RigidBodyBundle {
-    pub fn new(hitbox: Hitbox) -> Self {
-        Self {
-            marker: RigidBody,
-            hitbox,
-            transform: TransformBundle::default(),
-        }
-    }
-}
-
 #[derive(Component, Debug)]
 pub struct AnimationTimer(pub Timer);
 
 #[derive(Component)]
 pub struct Tilemap;
+
+#[derive(Component, Default, Debug, Reflect)]
+pub struct WallContactState {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+}
 
 #[derive(Bundle)]
 pub struct BulletBundle {
@@ -101,7 +90,7 @@ impl BulletBundle {
             },
             lifetime: Lifetime(lifetime),
             hitbox: Hitbox::Circle {
-                pos: Vec2::splat(3.),
+                offset: Vec2::splat(3.),
                 radius: 2.5,
             },
         }
@@ -118,6 +107,8 @@ pub struct PlayerBundle {
     indices: AnimationIndices,
     can_shoot: CanShoot,
     hitbox: Hitbox,
+    wall_sensors: WallSensors,
+    wall_contact_state: WallContactState,
     input_angle: InputAngle,
 }
 
@@ -139,9 +130,28 @@ impl PlayerBundle {
                 since_last: 999,
             },
             hitbox: Hitbox::Rect {
-                pos: Vec2::ZERO,
-                half_size: Vec2::splat(4.),
+                offset: Vec2::ZERO,
+                half_size: Vec2::splat(4.3),
             },
+            wall_sensors: WallSensors {
+                up: Hitbox::Rect {
+                    offset: Vec2::Y * 4.3,
+                    half_size: Vec2::new(4.25, 0.05),
+                },
+                down: Hitbox::Rect {
+                    offset: Vec2::NEG_Y * 4.3,
+                    half_size: Vec2::new(4.25, 0.05),
+                },
+                left: Hitbox::Rect {
+                    offset: Vec2::NEG_X * 4.3,
+                    half_size: Vec2::new(0.05, 4.25),
+                },
+                right: Hitbox::Rect {
+                    offset: Vec2::X * 4.3,
+                    half_size: Vec2::new(0.05, 4.25),
+                },
+            },
+            wall_contact_state: WallContactState::default(),
             input_angle: InputAngle(0),
         }
     }

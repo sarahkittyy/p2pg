@@ -55,6 +55,7 @@ fn main() {
 
     app.insert_resource(Msaa::Off)
         .insert_resource(LoadingAssets(vec![]))
+        .register_type::<WallContactState>()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -101,12 +102,13 @@ fn main() {
         .add_systems(
             GgrsSchedule,
             (
+                sense_walls,
                 move_player,
                 player_terrain_collision,
                 track_player_facing,
                 point_bow,
                 shoot,
-                bullet_terrain_collision,
+                //bullet_terrain_collision,
                 bullet_player_collision,
                 reload,
                 move_bullets,
@@ -123,6 +125,7 @@ fn main() {
                 animate_player,
                 animate_bow,
                 process_ggrs_events,
+                //gui::fps_display,
             ),
         ) // client-side non-deterministic systems
         .add_plugins(EguiPlugin)
@@ -131,14 +134,17 @@ fn main() {
 }
 
 /// destroy bullets that interact with solid terrain
-fn bullet_terrain_collision(
+fn _bullet_terrain_collision(
     mut commands: Commands,
     q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<RigidBody>)>,
-    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Bullet>)>,
+    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Bullet>)>,
 ) {
     for (b_entity, b_hitbox, b_transform) in &q_bullet {
         for (r_hitbox, r_transform) in &q_rigidbody {
-            if hitbox_intersects((b_hitbox, &b_transform), (r_hitbox, r_transform)) {
+            if hitbox_intersects(
+                (b_hitbox, b_transform),
+                (r_hitbox, &r_transform.compute_transform()),
+            ) {
                 commands.entity(b_entity).despawn_recursive();
             }
         }
@@ -148,11 +154,14 @@ fn bullet_terrain_collision(
 /// stop players from running into solid terrain
 fn player_terrain_collision(
     mut q_player: Query<(&Hitbox, &mut Transform), (With<Player>, Without<RigidBody>)>,
-    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Player>)>,
+    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Player>)>,
 ) {
     for (p_hitbox, mut p_transform) in &mut q_player {
         for (r_hitbox, r_transform) in &q_rigidbody {
-            let resolution = hitbox_collision((p_hitbox, &p_transform), (r_hitbox, r_transform));
+            let resolution = hitbox_collision(
+                (p_hitbox, &p_transform),
+                (r_hitbox, &r_transform.compute_transform()),
+            );
             p_transform.translation.x += resolution.x;
             p_transform.translation.y += resolution.y;
         }
@@ -219,7 +228,6 @@ fn load(asset_server: Res<AssetServer>, mut loading: ResMut<LoadingAssets>) {
         "Archer.png",
         "arrow.png",
         "bow.png",
-        "sfx/Bow_Charge.wav",
         "sfx/Bow_Release.wav",
         "sfx/Damage_1.wav",
     ]
@@ -330,24 +338,14 @@ fn shoot(
 }
 
 fn reload(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    mut _commands: Commands,
+    _asset_server: Res<AssetServer>,
     inputs: Res<PlayerInputs<GgrsConfig>>,
     mut q_player: Query<(&Player, &mut CanShoot)>,
 ) {
     for (player, mut can_shoot) in &mut q_player {
         let (input, _) = inputs[player.id];
 
-        if can_shoot.since_last == 10 {
-            commands.spawn(AudioBundle {
-                source: asset_server.load("sfx/Bow_Charge.wav"),
-                settings: PlaybackSettings {
-                    mode: PlaybackMode::Despawn,
-                    volume: Volume::Relative(VolumeLevel::new(0.4)),
-                    ..default()
-                },
-            });
-        }
         can_shoot.since_last += 1;
 
         if !input.fire() {
@@ -460,14 +458,61 @@ fn animate_player(mut q_player: Query<(&Velocity, &Facing, &mut AnimationIndices
     }
 }
 
+fn sense_walls(
+    mut q_player: Query<
+        (&WallSensors, &mut WallContactState, &Transform),
+        (With<Player>, Without<RigidBody>),
+    >,
+    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Player>)>,
+) {
+    for (p_wallsensors, mut walls, p_transform) in &mut q_player {
+        let mut hitting_up = false;
+        let mut hitting_down = false;
+        let mut hitting_right = false;
+        let mut hitting_left = false;
+        for (r_hitbox, r_transform) in &q_rigidbody {
+            let rt = r_transform.compute_transform();
+            if !hitting_up {
+                hitting_up = hitbox_intersects((&p_wallsensors.up, p_transform), (r_hitbox, &rt));
+            }
+            if !hitting_down {
+                hitting_down =
+                    hitbox_intersects((&p_wallsensors.down, p_transform), (r_hitbox, &rt));
+            }
+            if !hitting_left {
+                hitting_left =
+                    hitbox_intersects((&p_wallsensors.left, p_transform), (r_hitbox, &rt));
+            }
+            if !hitting_right {
+                hitting_right =
+                    hitbox_intersects((&p_wallsensors.right, p_transform), (r_hitbox, &rt));
+            }
+        }
+        walls.up = hitting_up;
+        walls.down = hitting_down;
+        walls.left = hitting_left;
+        walls.right = hitting_right;
+    }
+}
+
+fn wall_direction_clamp(mut dir: Vec2, walls: &WallContactState) -> Vec2 {
+    if (walls.up && dir.y > 0.) || (walls.down && dir.y < 0.) {
+        dir.y = 0.;
+    }
+    if (walls.right && dir.x > 0.) || (walls.left && dir.x < 0.) {
+        dir.x = 0.;
+    }
+    dir
+}
+
 fn move_player(
-    mut q_player: Query<(&mut Transform, &mut Velocity, &Player)>,
+    mut q_player: Query<(&mut Transform, &mut Velocity, &WallContactState, &Player)>,
     inputs: Res<PlayerInputs<GgrsConfig>>,
 ) {
-    for (mut transform, mut velocity, player) in &mut q_player {
+    for (mut transform, mut velocity, walls, player) in &mut q_player {
         let (input, _) = inputs[player.id];
 
-        let dir = input.direction();
+        let dir = wall_direction_clamp(input.direction(), walls).normalize_or_zero();
         let delta = (dir * 1.4).normalize_or_zero();
         velocity.0 = delta;
 
