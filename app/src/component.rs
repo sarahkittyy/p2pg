@@ -35,19 +35,19 @@ pub struct CanShoot {
     pub since_last: usize,
 }
 
-#[derive(Component, Debug)]
-pub struct Bullet {
-    pub dir: Vec2,
-    pub vel: f32,
-}
+#[derive(Component)]
+pub struct Bullet;
 
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Reflect, Debug, Default, PartialEq, Eq)]
 pub struct AnimationIndices {
     pub first: usize,
     pub last: usize,
     pub flip_x: bool,
     pub flip_y: bool,
 }
+
+#[derive(Component, Debug, Reflect)]
+pub struct AnimationTimer(pub Timer);
 
 #[derive(Component)]
 pub struct FollowPlayer;
@@ -57,9 +57,6 @@ pub struct MainCamera;
 
 #[derive(Component)]
 pub struct MinimapCamera;
-
-#[derive(Component, Debug)]
-pub struct AnimationTimer(pub Timer);
 
 #[derive(Component)]
 pub struct Tilemap;
@@ -78,6 +75,7 @@ pub struct Spawnpoint(pub Vec2);
 #[derive(Bundle)]
 pub struct BulletBundle {
     bullet: Bullet,
+    velocity: Velocity,
     sprite: SpriteBundle,
     lifetime: Lifetime,
     hitbox: Hitbox,
@@ -86,7 +84,8 @@ pub struct BulletBundle {
 impl BulletBundle {
     pub fn new(dir: Vec2, vel: f32, lifetime: usize, texture: Handle<Image>) -> Self {
         Self {
-            bullet: Bullet { dir, vel },
+            bullet: Bullet,
+            velocity: Velocity(dir.normalize_or_zero() * vel),
             sprite: SpriteBundle {
                 texture,
                 ..default()

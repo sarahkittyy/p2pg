@@ -1,7 +1,13 @@
-use bevy::prelude::*;
+use bevy::{
+    audio::{PlaybackMode, Volume, VolumeLevel},
+    prelude::*,
+};
 use sepax2d::prelude::*;
 
-use crate::DebugState;
+use crate::{
+    component::{Bullet, Player, Velocity},
+    DebugState,
+};
 
 #[derive(Clone, Copy, Debug, Component, Reflect)]
 pub enum Hitbox {
@@ -71,6 +77,74 @@ impl RigidBodyBundle {
             marker: RigidBody,
             hitbox,
             transform: TransformBundle::IDENTITY,
+        }
+    }
+}
+
+/// collisions between bullets and players
+pub fn bullet_player_system(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<Player>)>,
+    q_player: Query<(Entity, &Hitbox, &Transform), (With<Player>, Without<Bullet>)>,
+) {
+    for (_p_entity, p_hitbox, p_transform) in &q_player {
+        for (b_entity, b_hitbox, b_transform) in &q_bullet {
+            if hitbox_intersects((p_hitbox, p_transform), (b_hitbox, b_transform)) {
+                commands.entity(b_entity).despawn();
+                commands.spawn(AudioBundle {
+                    source: asset_server.load("sfx/Damage_1.wav"),
+                    settings: PlaybackSettings {
+                        mode: PlaybackMode::Despawn,
+                        volume: Volume::Relative(VolumeLevel::new(0.3)),
+                        speed: 1.,
+                        ..default()
+                    },
+                });
+            }
+        }
+    }
+}
+
+/// reflect bullets that interact with solid terrain
+pub fn _bullet_terrain_system(
+    mut _commands: Commands,
+    mut q_bullet: Query<
+        (Entity, &mut Velocity, &Hitbox, &Transform),
+        (With<Bullet>, Without<RigidBody>),
+    >,
+    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Bullet>)>,
+) {
+    for (_b_entity, mut b_vel, b_hitbox, b_transform) in &mut q_bullet {
+        for (r_hitbox, r_transform) in &q_rigidbody {
+            // the arrow should bounce in this direction
+            let resolution = hitbox_collision(
+                (b_hitbox, b_transform),
+                (r_hitbox, &r_transform.compute_transform()),
+            );
+            if resolution.x.abs() > 0. {
+                b_vel.0.x = b_vel.0.x.abs() * resolution.x.signum();
+            }
+            if resolution.y.abs() > 0. {
+                b_vel.0.y = b_vel.0.y.abs() * resolution.y.signum();
+            }
+        }
+    }
+}
+
+/// stop players from running into solid terrain
+pub fn player_terrain_system(
+    mut q_player: Query<(&Hitbox, &mut Transform), (With<Player>, Without<RigidBody>)>,
+    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Player>)>,
+) {
+    for (p_hitbox, mut p_transform) in &mut q_player {
+        for (r_hitbox, r_transform) in &q_rigidbody {
+            let resolution = hitbox_collision(
+                (p_hitbox, &p_transform),
+                (r_hitbox, &r_transform.compute_transform()),
+            );
+            p_transform.translation.x += resolution.x;
+            p_transform.translation.y += resolution.y;
         }
     }
 }

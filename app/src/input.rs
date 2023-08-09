@@ -2,14 +2,17 @@ use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_ggrs::*;
 use bytemuck::{Pod, Zeroable};
+use std::f32::consts::PI;
 
 use crate::component::{InputAngle, MainCamera, Player};
 
-use std::f32::consts::PI;
+mod touch;
+pub use touch::*;
 
-#[derive(Clone, Copy, PartialEq, Zeroable, Pod)]
+#[derive(Clone, Copy, PartialEq, Zeroable, Pod, Debug, Default)]
 #[repr(C)]
 pub struct PlayerInput {
+    pub dir: u8, // 0 - 255 clockwise from up
     pub btn: u8,
     pub angle: u8, // 0 - 255 clockwise from up
 }
@@ -19,31 +22,25 @@ impl PlayerInput {
         self.btn & FIRE != 0
     }
 
-    pub fn direction(&self) -> Vec2 {
-        let mut dir = Vec2::ZERO;
+    pub fn moving(&self) -> bool {
+        self.btn & MOVE != 0
+    }
 
-        if self.btn & LEFT != 0 {
-            dir += Vec2::NEG_X;
-        }
-        if self.btn & RIGHT != 0 {
-            dir += Vec2::X;
-        }
-        if self.btn & UP != 0 {
-            dir += Vec2::Y;
-        }
-        if self.btn & DOWN != 0 {
-            dir += Vec2::NEG_Y;
-        }
-        dir.normalize_or_zero()
+    pub fn direction(&self) -> Vec2 {
+        angle_to_vec(from_u8_angle(self.dir)).normalize_or_zero()
     }
 }
 
-// user inputs
-pub const UP: u8 = 1 << 0;
-pub const DOWN: u8 = 1 << 1;
-pub const LEFT: u8 = 1 << 2;
-pub const RIGHT: u8 = 1 << 3;
-pub const FIRE: u8 = 1 << 4;
+// button inputs
+pub const MOVE: u8 = 1 << 0; // any move input (usually wasd on pc and touch on mobile)
+pub const FIRE: u8 = 1 << 1;
+
+/// convert a 2d coordinate from view space to world space
+pub fn view_to_world(pos: Vec2, camera: &Camera, transform: &GlobalTransform) -> Vec2 {
+    camera
+        .viewport_to_world_2d(transform, pos)
+        .expect("Could not transform position from world to view space.")
+}
 
 // angle should be between 0 and 2 * PI
 pub fn to_u8_angle(angle: f32) -> u8 {
@@ -69,62 +66,75 @@ pub fn angle_to_vec(angle: f32) -> Vec2 {
     angle.sin_cos().into()
 }
 
+/// primary ggrs input system
 pub fn input(
     player_handle: In<ggrs::PlayerHandle>,
     keys: Res<Input<KeyCode>>,
     mouse_buttons: Res<Input<MouseButton>>,
+    mut touch: ResMut<TouchMovement>,
+
     q_window: Query<(Entity, &Window)>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut q_player: Query<(&Player, &mut InputAngle, &GlobalTransform)>,
-    mut egui_ctx: EguiContexts,
+
+    mut ctxs: EguiContexts,
 ) -> PlayerInput {
     let (window_entity, window) = q_window.single();
     let (camera, camera_transform) = q_camera.single();
 
+    let ctx = ctxs.try_ctx_for_window_mut(window_entity);
+    let Some((_player, mut input_angle, player_transform)) = q_player.iter_mut().filter(|(p, ..)| p.id == player_handle.0).next() else { return PlayerInput::default(); };
+    let player_pos = player_transform.translation().truncate();
+
+    if let Some(touch_input) = touch.drain(player_pos, input_angle.0, |pos| {
+        view_to_world(pos, camera, camera_transform)
+    }) {
+        input_angle.0 = touch_input.angle;
+        return touch_input;
+    }
+
     let mut btn = 0u8;
+    let mut dir = IVec2::ZERO;
     if window.focused {
         if keys.pressed(KeyCode::A) {
-            btn |= LEFT;
+            btn |= MOVE;
+            dir += IVec2::NEG_X;
         }
         if keys.pressed(KeyCode::D) {
-            btn |= RIGHT;
+            btn |= MOVE;
+            dir += IVec2::X;
         }
         if keys.pressed(KeyCode::W) {
-            btn |= UP;
+            btn |= MOVE;
+            dir += IVec2::Y;
         }
         if keys.pressed(KeyCode::S) {
-            btn |= DOWN;
+            btn |= MOVE;
+            dir += IVec2::NEG_Y;
         }
         if mouse_buttons.pressed(MouseButton::Left)
-            && !egui_ctx
-                .try_ctx_for_window_mut(window_entity)
-                .is_some_and(|v| v.is_pointer_over_area())
+            && !ctx.is_some_and(|v| v.is_pointer_over_area())
         {
             btn |= FIRE;
         }
     }
 
-    let mut angle = 0u8;
+    let mut angle = input_angle.0;
     // get the cursor position in the world
     let cursor_pos: Option<Vec2> = window
         .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor));
+        .map(|cursor| view_to_world(cursor, camera, camera_transform));
 
     // fetch our own player position
-    for (player, mut input_angle, player_transform) in &mut q_player {
-        if player.id == player_handle.0 {
-            if let Some(cursor_pos) = cursor_pos {
-                // cursor in window
-                let self_pos = player_transform.translation().truncate();
-                angle = to_u8_angle(vec_to_angle(cursor_pos - self_pos));
-                // cache this known angle
-                input_angle.0 = angle;
-            } else {
-                // if no cursor pos, use the last known angle
-                angle = input_angle.0;
-            }
-            break;
-        }
+    if let Some(cursor_pos) = cursor_pos {
+        // cursor in window
+        let self_pos = player_transform.translation().truncate();
+        angle = to_u8_angle(vec_to_angle(cursor_pos - self_pos));
     }
-    PlayerInput { btn, angle }
+    input_angle.0 = angle;
+    PlayerInput {
+        dir: to_u8_angle(vec_to_angle(dir.as_vec2())),
+        btn,
+        angle,
+    }
 }

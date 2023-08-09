@@ -4,17 +4,13 @@ use bevy::{
     asset::LoadState,
     audio::Volume,
     audio::{PlaybackMode, VolumeLevel},
-    core_pipeline::clear_color::ClearColorConfig,
     prelude::*,
-    render::{
-        camera::{ScalingMode, Viewport},
-        primitives::Aabb,
-    },
 };
 use bevy_egui::EguiPlugin;
 use bevy_ggrs::*;
 
 mod animation;
+mod camera;
 mod collision;
 mod component;
 mod gui;
@@ -64,12 +60,13 @@ fn main() {
     app.insert_resource(Msaa::Off)
         .insert_resource(LoadingAssets(vec![]))
         .register_type::<WallContactState>()
+        .register_type::<Velocity>()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
                     // window config
                     primary_window: Some(Window {
-                        prevent_default_event_handling: false,
+                        prevent_default_event_handling: true,
                         fit_canvas_to_parent: true,
                         title: "p2pg".to_owned(),
                         ..default()
@@ -86,12 +83,13 @@ fn main() {
         .add_plugins(SpriteAnimationPlugin)
         .add_plugins(DebugHitboxPlugin)
         .add_plugins(NetworkingPlugin)
+        .add_plugins(TouchPlugin)
         .add_state::<GameState>()
         .add_state::<DebugState>()
         // LOADING
         .add_systems(OnEnter(GameState::Loading), load) // load essential assets
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
-        .add_systems(OnExit(GameState::Loading), setup) // pre-connect initialization (camera, bg, etc.)
+        .add_systems(OnExit(GameState::Loading), camera::spawn_primary) // pre-connect initialization (camera, bg, etc.)
         // LOBBY
         .add_systems(OnEnter(GameState::Lobby), reset_game)
         .add_systems(Update, gui::main_menu.run_if(in_state(GameState::Lobby)))
@@ -113,12 +111,12 @@ fn main() {
             (
                 sense_walls,
                 move_player,
-                player_terrain_collision,
+                collision::player_terrain_system,
                 track_player_facing,
                 point_bow,
                 shoot,
-                //bullet_terrain_collision,
-                bullet_player_collision,
+                //collision::bullet_terrain_system,
+                collision::bullet_player_system,
                 reload,
                 move_bullets,
                 despawn_after_lifetime,
@@ -131,7 +129,7 @@ fn main() {
             Update,
             (
                 toggle_debug,
-                camera_follow,
+                camera::follow_player,
                 animate_player,
                 animate_bow,
                 process_ggrs_events,
@@ -156,41 +154,6 @@ fn toggle_debug(
     }
 }
 
-/// destroy bullets that interact with solid terrain
-fn _bullet_terrain_collision(
-    mut commands: Commands,
-    q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<RigidBody>)>,
-    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Bullet>)>,
-) {
-    for (b_entity, b_hitbox, b_transform) in &q_bullet {
-        for (r_hitbox, r_transform) in &q_rigidbody {
-            if hitbox_intersects(
-                (b_hitbox, b_transform),
-                (r_hitbox, &r_transform.compute_transform()),
-            ) {
-                commands.entity(b_entity).despawn_recursive();
-            }
-        }
-    }
-}
-
-/// stop players from running into solid terrain
-fn player_terrain_collision(
-    mut q_player: Query<(&Hitbox, &mut Transform), (With<Player>, Without<RigidBody>)>,
-    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Player>)>,
-) {
-    for (p_hitbox, mut p_transform) in &mut q_player {
-        for (r_hitbox, r_transform) in &q_rigidbody {
-            let resolution = hitbox_collision(
-                (p_hitbox, &p_transform),
-                (r_hitbox, &r_transform.compute_transform()),
-            );
-            p_transform.translation.x += resolution.x;
-            p_transform.translation.y += resolution.y;
-        }
-    }
-}
-
 fn reset_game(
     mut commands: Commands,
     q_player: Query<Entity, With<Player>>,
@@ -208,35 +171,6 @@ fn reset_game(
     // remove any sockets and sessions
     commands.remove_resource::<MatchboxSocket<SingleChannel>>();
     commands.remove_resource::<Session<GgrsConfig>>();
-}
-
-fn setup(mut commands: Commands) {
-    let ideal_aspect_ratio = 16f32 / 9.;
-    let max_width = 16. * 25.;
-    let max_height = max_width / ideal_aspect_ratio;
-
-    // main camera
-    commands
-        .spawn(MainCamera)
-        .insert(Camera2dBundle {
-            projection: OrthographicProjection {
-                // optimize view area on 16
-                scaling_mode: ScalingMode::AutoMax {
-                    max_height,
-                    max_width,
-                },
-                ..default()
-            },
-            camera: Camera {
-                order: 0,
-                ..default()
-            },
-            camera_2d: Camera2d {
-                clear_color: ClearColorConfig::Custom(Color::BLACK),
-            },
-            ..default()
-        })
-        .insert(FollowPlayer);
 }
 
 fn load(
@@ -294,35 +228,10 @@ fn countdown(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Combat);
 }
 
-fn bullet_player_collision(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<Player>)>,
-    q_player: Query<(Entity, &Hitbox, &Transform), (With<Player>, Without<Bullet>)>,
-) {
-    for (_p_entity, p_hitbox, p_transform) in &q_player {
-        for (b_entity, b_hitbox, b_transform) in &q_bullet {
-            if hitbox_intersects((p_hitbox, p_transform), (b_hitbox, b_transform)) {
-                commands.entity(b_entity).despawn();
-                commands.spawn(AudioBundle {
-                    source: asset_server.load("sfx/Damage_1.wav"),
-                    settings: PlaybackSettings {
-                        mode: PlaybackMode::Despawn,
-                        volume: Volume::Relative(VolumeLevel::new(0.3)),
-                        speed: 1.,
-                        ..default()
-                    },
-                });
-            }
-        }
-    }
-}
-
-fn move_bullets(mut q_bullets: Query<(&Bullet, &mut Transform)>) {
-    for (bullet, mut bullet_transform) in &mut q_bullets {
-        let delta = bullet.dir * bullet.vel;
-        bullet_transform.translation.x += delta.x;
-        bullet_transform.translation.y += delta.y;
+fn move_bullets(mut q_bullets: Query<(&Velocity, &mut Transform), With<Bullet>>) {
+    for (vel, mut bullet_transform) in &mut q_bullets {
+        bullet_transform.translation.x += vel.0.x;
+        bullet_transform.translation.y += vel.0.y;
     }
 }
 
@@ -386,45 +295,6 @@ fn reload(
             if !can_shoot.value {
                 can_shoot.value = true;
             }
-        }
-    }
-}
-
-fn camera_follow(
-    local_player_id: Option<Res<LocalPlayerId>>,
-    q_player: Query<(&Player, &Transform)>,
-    mut q_camera: Query<
-        (&mut Transform, &OrthographicProjection),
-        (With<FollowPlayer>, With<Camera>, Without<Player>),
-    >,
-    q_map: Query<(&Aabb, &Transform), (With<Tilemap>, Without<Camera>, Without<Player>)>,
-) {
-    let Some(id) = local_player_id else { return; };
-    // tilemap aabb relative to itself
-    let Ok((map_aabb, map_transform)) = q_map.get_single() else { return; };
-    for (player, player_transform) in &q_player {
-        if player.id != id.0 {
-            continue;
-        }
-
-        for (mut transform, proj) in &mut q_camera {
-            let player_pos = player_transform.translation.truncate();
-            let viewport_area = proj.area;
-
-            let map_center = map_transform
-                .transform_point(map_aabb.center.into())
-                .truncate();
-            let map_halfsize = (map_transform.scale * Vec3::from(map_aabb.half_extents)).truncate();
-
-            // map boundary in world coordinates
-            let map_min = map_center - map_halfsize;
-            let map_max = map_center + map_halfsize;
-
-            let camera_min = map_min + viewport_area.size() / 2.;
-            let camera_max = map_max - viewport_area.size() / 2.;
-
-            transform.translation.x = player_pos.x.clamp(camera_min.x, camera_max.x);
-            transform.translation.y = player_pos.y.clamp(camera_min.y, camera_max.y);
         }
     }
 }
@@ -546,9 +416,12 @@ fn move_player(
     for (mut transform, mut velocity, walls, player) in &mut q_player {
         let (input, _) = inputs[player.id];
 
-        let dir = wall_direction_clamp(input.direction(), walls).normalize_or_zero();
-        let delta = (dir * 1.4).normalize_or_zero();
-        velocity.0 = delta;
+        velocity.0 = if !input.moving() {
+            Vec2::ZERO
+        } else {
+            let dir = wall_direction_clamp(input.direction(), walls).normalize_or_zero();
+            (dir * 1.4).normalize_or_zero()
+        };
 
         transform.translation += velocity.0.extend(0.);
     }
@@ -595,31 +468,4 @@ fn spawn_players(
                 .add_rollback();
         })
         .add_rollback();
-}
-
-fn _spawn_minimap_camera(mut commands: Commands) {
-    commands
-        .spawn(MinimapCamera)
-        .insert(Camera2dBundle {
-            projection: OrthographicProjection {
-                scaling_mode: ScalingMode::Fixed {
-                    width: 400.,
-                    height: 400.,
-                },
-                ..default()
-            },
-            camera: Camera {
-                viewport: Some(Viewport {
-                    physical_size: UVec2::splat(100),
-                    ..default()
-                }),
-                order: 1,
-                ..default()
-            },
-            camera_2d: Camera2d {
-                clear_color: ClearColorConfig::None,
-            },
-            ..default()
-        })
-        .insert(FollowPlayer);
 }

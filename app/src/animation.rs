@@ -9,7 +9,9 @@ pub use player::*;
 pub struct SpriteAnimationPlugin;
 impl Plugin for SpriteAnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (on_animation_change, tick_animations).chain());
+        app.register_type::<AnimationIndices>()
+            .register_type::<AnimationTimer>()
+            .add_systems(Update, (on_animation_change, tick_animations).chain());
     }
 }
 
