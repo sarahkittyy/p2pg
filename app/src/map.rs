@@ -2,7 +2,7 @@ use std::{io::Cursor, path::Path, sync::Arc};
 
 use crate::{
     collision::{Hitbox, RigidBodyBundle},
-    component::Tilemap,
+    component::{Spawnpoints, Tilemap},
     MAP_FG_Z,
 };
 use anyhow::anyhow;
@@ -18,7 +18,8 @@ use tiled;
 pub struct TiledPlugin;
 impl Plugin for TiledPlugin {
     fn build(&self, app: &mut App) {
-        app.add_asset::<TiledMap>()
+        app.register_type::<Spawnpoints>()
+            .add_asset::<TiledMap>()
             .add_asset_loader(TiledLoader)
             .add_systems(Update, tilemap_initializer);
     }
@@ -33,6 +34,7 @@ struct TilemapBundle {
     tilemap: Tilemap,
     aabb: Aabb,
     spatial: SpatialBundle,
+    spawnpoints: Spawnpoints,
 }
 
 #[derive(Component)]
@@ -87,6 +89,7 @@ fn tilemap_initializer(
                 tilemap: Tilemap,
                 aabb: tilemap_aabb(map),
                 spatial: SpatialBundle::from_transform(transform.cloned().unwrap_or_default()),
+                spawnpoints: get_map_spawnpoints(&map),
             })
             .id();
 
@@ -134,6 +137,28 @@ fn tilemap_initializer(
         // despawn the loader
         commands.entity(entity).despawn_recursive();
     }
+}
+
+fn get_map_spawnpoints(map: &tiled::Map) -> Spawnpoints {
+    let mut res = vec![];
+
+    let map_size = map_size(&map);
+
+    for layer in map.layers() {
+        let class = layer.user_type.as_deref();
+        let Some(layer) = layer.as_object_layer() else { continue; };
+        if class.is_some_and(|s| s == "spawnpoints") {
+            layer
+                .objects()
+                .filter_map(|object| match object.shape {
+                    tiled::ObjectShape::Point(x, y) => Some(Vec2::new(x, map_size.y - y)),
+                    _ => None,
+                })
+                .for_each(|spawnpoint| res.push(spawnpoint));
+        }
+    }
+
+    Spawnpoints(res)
 }
 
 fn layer_to_collision(map: &tiled::Map, layer: &tiled::ObjectLayer) -> Vec<(Hitbox, Transform)> {

@@ -690,7 +690,7 @@
    <ellipse/>
   </object>
  </objectgroup>
- <objectgroup id="5" name="spawnpoints" class="spawns">
+ <objectgroup id="5" name="spawnpoints" class="spawnpoints">
   <object id="11" x="310" y="294.5">
    <point/>
   </object>

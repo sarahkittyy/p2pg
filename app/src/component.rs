@@ -69,8 +69,8 @@ pub struct WallContactState {
     pub right: bool,
 }
 
-#[derive(Component)]
-pub struct Spawnpoint(pub Vec2);
+#[derive(Component, Default, Debug, Reflect)]
+pub struct Spawnpoints(pub Vec<Vec2>);
 
 #[derive(Bundle)]
 pub struct BulletBundle {
