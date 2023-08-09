@@ -95,7 +95,7 @@ fn init_virtual_joystick(
     commands
         .spawn(JoystickOuter)
         .insert(MaterialMesh2dBundle {
-            mesh: Mesh2dHandle(meshes.add(shape::Circle::new(64.).into())),
+            mesh: Mesh2dHandle(meshes.add(shape::Quad::new(Vec2::splat(128.)).into())),
             material: materials.add(ColorMaterial {
                 color: Color::WHITE,
                 texture: Some(asset_server.load("joystick_ring.png")),

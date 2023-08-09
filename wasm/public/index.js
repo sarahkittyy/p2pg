@@ -11,6 +11,7 @@ const total_bytes = parseInt(response.headers.get('Content-Length'));
 let svg_circle = document.getElementById('loading-circle');
 let progress_bar = document.getElementById('progress-bar');
 let loading_text = document.getElementById('loading-text');
+let resolution_text = document.getElementById('resolution-warning');
 
 function bouncy_text(text, index) {
 	return text.split('').map((char, i) => i === index ? char.toUpperCase() : char).join('');
@@ -45,6 +46,7 @@ for(let chunk of chunks) {
 }
 
 init(allChunks);
+resolution_text.hidden = true;
 
 function update_loading_bar(t) {
 	function sdo(t) {

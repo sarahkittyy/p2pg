@@ -6,6 +6,21 @@ html, body {
 	background-color: #222;
 }
 
+#resolution-warning {
+	font-size: 12pt;
+	color: #eee;
+	position: absolute;
+	width: 100%;
+	bottom: 3px;
+	text-align: center;
+}
+
+@media (orientation: landscape) {
+	.invisible-if-wide {
+		display: none;
+	}
+}
+
 .progressbar {
 	position: absolute;
 	left: calc(50% - 125px);
