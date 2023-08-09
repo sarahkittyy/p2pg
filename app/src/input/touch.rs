@@ -195,8 +195,8 @@ fn process_touch_events(mut touch_res: ResMut<TouchMovement>, mut events: EventR
                 if touch_res.stick_id.is_some_and(|sid| sid == *id) {
                     touch_res.stick_id = None;
                 }
-                // fire if it was a tap
-                if finger.tap {
+                // fire if it was a tap or if there's already a joystick
+                if finger.tap || touch_res.stick_id.is_some() {
                     touch_res.fire_touch = Some(touch.position);
                 }
             }
