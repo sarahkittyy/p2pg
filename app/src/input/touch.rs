@@ -39,6 +39,8 @@ struct JoystickOuter;
 #[derive(Component)]
 struct JoystickCamera;
 
+const JOYSTICK_DEADZONE: f32 = 10.;
+
 /// display touch controls when they're in use, updating them to the position and existence of the joystick
 fn update_virtual_joystick(
     mut q_inner: Query<
@@ -59,7 +61,10 @@ fn update_virtual_joystick(
     match touches.stick_id {
         Some(sid) if touches.fingers.contains_key(&sid) => {
             let finger = touches.fingers.get(&sid).unwrap();
-            let delta = (finger.pos - finger.start_pos).clamp_length_max(32.);
+            let mut delta = (finger.pos - finger.start_pos).clamp_length_max(32.);
+            if delta.length() <= JOYSTICK_DEADZONE {
+                delta = Vec2::ZERO;
+            }
             i_t.translation =
                 view_to_world(finger.start_pos + delta, camera, c_transform).extend(0.);
             o_t.translation = view_to_world(finger.start_pos, camera, c_transform).extend(0.);
@@ -226,6 +231,7 @@ impl TouchMovement {
             .stick_id
             .and_then(|sid| self.fingers.get(&sid))
             .map(|stick_finger| stick_finger.delta() * Vec2::new(1., -1.))
+            .filter(|delta| delta.length() > JOYSTICK_DEADZONE)
             .map(|delta| to_u8_angle(vec_to_angle(delta)));
 
         let dir = stick_dir.unwrap_or(0u8);
