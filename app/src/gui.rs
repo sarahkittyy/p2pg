@@ -1,6 +1,10 @@
 use std::collections::VecDeque;
 
-use crate::GameState;
+use crate::{
+    component::{Player, Points},
+    p2p::LocalPlayer,
+    GameState,
+};
 use bevy::prelude::*;
 use bevy_egui::{
     egui::{self, Align2, Context, Pos2, Vec2},
@@ -26,6 +30,31 @@ pub fn fps_display(mut ctxs: EguiContexts, time: Res<Time>, mut history: Local<V
         .anchor(Align2::RIGHT_TOP, Vec2::ZERO)
         .show(ctx, |ui| {
             ui.heading(avg.round().to_string());
+        });
+}
+
+pub fn points_display(
+    mut ctxs: EguiContexts,
+    q_points: Query<(&Player, &Points)>,
+    local_player: Res<LocalPlayer>,
+) {
+    let ctx = ctxs.ctx_mut();
+    egui::Window::new("Points")
+        .anchor(Align2::RIGHT_TOP, Vec2::ZERO)
+        .resizable(false)
+        .collapsible(true)
+        .movable(false)
+        .show(ctx, |ui| {
+            for (player, points) in &q_points {
+                ui.horizontal(|ui| {
+                    if player.id == local_player.id {
+                        ui.label("You: ");
+                    } else {
+                        ui.label("Them: ");
+                    }
+                    ui.monospace(format!("{}", points.0));
+                });
+            }
         });
 }
 

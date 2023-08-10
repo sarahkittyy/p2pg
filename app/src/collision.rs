@@ -5,7 +5,7 @@ use bevy::{
 use sepax2d::prelude::*;
 
 use crate::{
-    component::{Bullet, Player, Velocity},
+    component::{Bullet, Health, LastDamagedBy, Player, Velocity},
     DebugState,
 };
 
@@ -85,13 +85,15 @@ impl RigidBodyBundle {
 pub fn bullet_player_system(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    q_bullet: Query<(Entity, &Hitbox, &Transform), (With<Bullet>, Without<Player>)>,
-    q_player: Query<(Entity, &Hitbox, &Transform), (With<Player>, Without<Bullet>)>,
+    q_bullet: Query<(Entity, &Bullet, &Hitbox, &Transform), Without<Player>>,
+    mut q_player: Query<
+        (Entity, &Hitbox, &Transform, &mut Health),
+        (With<Player>, Without<Bullet>),
+    >,
 ) {
-    for (_p_entity, p_hitbox, p_transform) in &q_player {
-        for (b_entity, b_hitbox, b_transform) in &q_bullet {
+    for (p_entity, p_hitbox, p_transform, mut p_health) in &mut q_player {
+        for (b_entity, bullet, b_hitbox, b_transform) in &q_bullet {
             if hitbox_intersects((p_hitbox, p_transform), (b_hitbox, b_transform)) {
-                commands.entity(b_entity).despawn();
                 commands.spawn(AudioBundle {
                     source: asset_server.load("sfx/Damage_1.wav"),
                     settings: PlaybackSettings {
@@ -101,6 +103,11 @@ pub fn bullet_player_system(
                         ..default()
                     },
                 });
+                p_health.0 -= 1;
+                commands
+                    .entity(p_entity)
+                    .insert(LastDamagedBy { id: bullet.shot_by });
+                commands.entity(b_entity).despawn();
             }
         }
     }

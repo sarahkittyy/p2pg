@@ -36,18 +36,17 @@ pub struct CanShoot {
 }
 
 #[derive(Component)]
-pub struct Bullet;
-
-#[derive(Component, Clone, Copy, Reflect, Debug, Default, PartialEq, Eq)]
-pub struct AnimationIndices {
-    pub first: usize,
-    pub last: usize,
-    pub flip_x: bool,
-    pub flip_y: bool,
+pub struct Bullet {
+    pub shot_by: usize,
 }
 
-#[derive(Component, Debug, Reflect)]
-pub struct AnimationTimer(pub Timer);
+#[derive(Component, Default, Debug, Reflect)]
+pub struct Health(pub i32);
+
+#[derive(Component, Default, Debug, Reflect)]
+pub struct LastDamagedBy {
+    pub id: usize,
+}
 
 #[derive(Component)]
 pub struct FollowPlayer;
@@ -61,6 +60,9 @@ pub struct MinimapCamera;
 #[derive(Component)]
 pub struct Tilemap;
 
+#[derive(Component, Reflect, Debug, Default)]
+pub struct Points(pub u32);
+
 #[derive(Component, Default, Debug, Reflect)]
 pub struct WallContactState {
     pub up: bool,
@@ -70,7 +72,7 @@ pub struct WallContactState {
 }
 
 #[derive(Component, Default, Debug, Reflect)]
-pub struct Spawnpoints(pub Vec<Vec2>);
+pub struct Spawnpoint;
 
 #[derive(Bundle)]
 pub struct BulletBundle {
@@ -82,9 +84,15 @@ pub struct BulletBundle {
 }
 
 impl BulletBundle {
-    pub fn new(dir: Vec2, vel: f32, lifetime: usize, texture: Handle<Image>) -> Self {
+    pub fn new(
+        shot_by: usize,
+        dir: Vec2,
+        vel: f32,
+        lifetime: usize,
+        texture: Handle<Image>,
+    ) -> Self {
         Self {
-            bullet: Bullet,
+            bullet: Bullet { shot_by },
             velocity: Velocity(dir.normalize_or_zero() * vel),
             sprite: SpriteBundle {
                 texture,
@@ -99,19 +107,42 @@ impl BulletBundle {
     }
 }
 
+// a player bundle consisting only of components important to reset on death
+// so that it can be inserted into the player entity to reload them
+#[derive(Bundle)]
+pub struct BasePlayerBundle {
+    velocity: Velocity,
+    can_shoot: CanShoot,
+    wall_contact_state: WallContactState,
+    health: Health,
+    input_angle: InputAngle,
+}
+
+impl Default for BasePlayerBundle {
+    fn default() -> Self {
+        Self {
+            velocity: Velocity(Vec2::ZERO),
+            can_shoot: CanShoot {
+                value: true,
+                since_last: 999,
+            },
+            wall_contact_state: WallContactState::default(),
+            health: Health(1),
+            input_angle: InputAngle(0),
+        }
+    }
+}
+
 #[derive(Bundle)]
 pub struct PlayerBundle {
     player: Player,
+    base: BasePlayerBundle,
     sprite: SpriteSheetBundle,
-    velocity: Velocity,
     facing: Facing,
-    timer: AnimationTimer,
-    indices: AnimationIndices,
-    can_shoot: CanShoot,
     hitbox: Hitbox,
+    animation: AnimationBundle,
     wall_sensors: WallSensors,
-    wall_contact_state: WallContactState,
-    input_angle: InputAngle,
+    points: Points,
 }
 
 impl PlayerBundle {
@@ -119,20 +150,18 @@ impl PlayerBundle {
         const SIZE: f32 = 4.1;
         const E: f32 = 0.05;
         Self {
+            base: BasePlayerBundle::default(),
             player: Player { id },
             sprite: SpriteSheetBundle {
                 texture_atlas: atlas,
                 sprite: TextureAtlasSprite::new(0),
                 ..default()
             },
-            velocity: Velocity(Vec2::ZERO),
             facing: Facing::Down,
-            timer: AnimationTimer(Timer::from_seconds(0.125, TimerMode::Repeating)),
-            indices: PLAYER_STAND_DOWN,
-            can_shoot: CanShoot {
-                value: true,
-                since_last: 999,
-            },
+            animation: AnimationBundle::new(
+                PlayerAnimation::Stand(Facing::Down).into(),
+                Timer::from_seconds(0.125, TimerMode::Repeating),
+            ),
             hitbox: Hitbox::Rect {
                 offset: Vec2::ZERO,
                 half_size: Vec2::splat(SIZE),
@@ -155,8 +184,7 @@ impl PlayerBundle {
                     half_size: Vec2::new(E, SIZE - E),
                 },
             },
-            wall_contact_state: WallContactState::default(),
-            input_angle: InputAngle(0),
+            points: Points(0),
         }
     }
 }
@@ -165,8 +193,7 @@ impl PlayerBundle {
 pub struct BowBundle {
     bow: Bow,
     sprite: SpriteSheetBundle,
-    timer: AnimationTimer,
-    indices: AnimationIndices,
+    animation: AnimationBundle,
 }
 
 impl BowBundle {
@@ -184,8 +211,10 @@ impl BowBundle {
                 },
                 ..default()
             },
-            timer: AnimationTimer(Timer::from_seconds(0.1, TimerMode::Once)),
-            indices: BOW_DRAW,
+            animation: AnimationBundle::new(
+                BowAnimation::Draw.into(),
+                Timer::from_seconds(0.1, TimerMode::Once),
+            ),
         }
     }
 }

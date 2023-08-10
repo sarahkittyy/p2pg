@@ -36,6 +36,25 @@ impl Rng {
     pub fn next_f32(&mut self) -> f32 {
         self.next_f64() as f32
     }
+
+    /// returns an int in the range [min, max)
+    pub fn next_i32(&mut self, min: i32, max: i32) -> i32 {
+        let r: f32 = self.next_f32();
+        let t = r * (max - min) as f32;
+        t as i32 + min
+    }
+
+    pub fn next_usize(&mut self, min: usize, max: usize) -> usize {
+        let r: f64 = self.next_f64();
+        let t = r * (max - min) as f64;
+        t as usize + min
+    }
+
+    /// remove a random element from the vector and return it
+    pub fn extract_random<T>(&mut self, c: &mut Vec<T>) -> T {
+        let n = self.next_usize(0, c.len());
+        c.swap_remove(n)
+    }
 }
 
 #[test]

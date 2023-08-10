@@ -9,7 +9,7 @@ use bevy::{
 
 use crate::{
     component::{FollowPlayer, MainCamera, MinimapCamera, Player, Tilemap},
-    p2p::LocalPlayerId,
+    p2p::LocalPlayer,
 };
 
 /// spawn the primary game camera
@@ -44,7 +44,7 @@ pub fn spawn_primary(mut commands: Commands) {
 
 /// sets the camera to follow the local player, stopping at the tilemap boundaries
 pub fn follow_player(
-    local_player_id: Option<Res<LocalPlayerId>>,
+    local_player_id: Option<Res<LocalPlayer>>,
     q_player: Query<(&Player, &Transform)>,
     mut q_camera: Query<
         (&mut Transform, &OrthographicProjection),
@@ -56,7 +56,7 @@ pub fn follow_player(
     // tilemap aabb relative to itself
     let Ok((map_aabb, map_transform)) = q_map.get_single() else { return; };
     for (player, player_transform) in &q_player {
-        if player.id != id.0 {
+        if player.id != id.id {
             continue;
         }
 

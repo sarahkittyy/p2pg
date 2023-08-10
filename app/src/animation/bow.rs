@@ -1,15 +1,16 @@
-use crate::component::AnimationIndices;
+use super::AnimationIndices;
 
-pub const BOW_EMPTY: AnimationIndices = AnimationIndices {
-    first: 0,
-    last: 0,
-    flip_x: false,
-    flip_y: false,
-};
+#[derive(Debug, Clone)]
+pub enum BowAnimation {
+    Empty,
+    Draw,
+}
 
-pub const BOW_DRAW: AnimationIndices = AnimationIndices {
-    first: 1,
-    last: 3,
-    flip_x: false,
-    flip_y: false,
-};
+impl From<BowAnimation> for AnimationIndices {
+    fn from(anim: BowAnimation) -> Self {
+        match anim {
+            BowAnimation::Empty => AnimationIndices::from_range(0, 0),
+            BowAnimation::Draw => AnimationIndices::from_range(1, 3),
+        }
+    }
+}

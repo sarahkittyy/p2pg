@@ -1,8 +1,9 @@
-use std::{io::Cursor, path::Path, sync::Arc};
+use std::{io::Cursor, path::Path, sync::Arc, time::Duration};
 
 use crate::{
+    animation::{AnimationBundle, AnimationIndices},
     collision::{Hitbox, RigidBodyBundle},
-    component::{Spawnpoints, Tilemap},
+    component::{Spawnpoint, Tilemap},
     MAP_FG_Z,
 };
 use anyhow::anyhow;
@@ -18,7 +19,7 @@ use tiled;
 pub struct TiledPlugin;
 impl Plugin for TiledPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Spawnpoints>()
+        app.register_type::<Spawnpoint>()
             .add_asset::<TiledMap>()
             .add_asset_loader(TiledLoader)
             .add_systems(Update, tilemap_initializer);
@@ -34,7 +35,6 @@ struct TilemapBundle {
     tilemap: Tilemap,
     aabb: Aabb,
     spatial: SpatialBundle,
-    spawnpoints: Spawnpoints,
 }
 
 #[derive(Component)]
@@ -55,12 +55,100 @@ impl TilemapLoaderBundle {
     }
 }
 
+#[derive(Bundle)]
+struct AnimatedTileBundle {
+    sprite: TextureAtlasSprite,
+    animation: AnimationBundle,
+    spatial: SpatialBundle,
+}
+
+fn decompose_layer(
+    map: &tiled::Map,
+    layer: &tiled::TileLayer,
+    tileset: &tiled::Tileset,
+) -> (Mesh, Vec<AnimatedTileBundle>) {
+    //NOTE: tiled renders right-down, but bevy is right-up (y is flipped)
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+    let mut animated_tiles = vec![];
+
+    // ccw vertices
+    let quad: [[f32; 3]; 4] = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
+
+    let mut positions: Vec<[f32; 3]> = vec![];
+    let mut normals: Vec<[f32; 3]> = vec![];
+    let mut uvs: Vec<[f32; 2]> = vec![];
+    let mut indices: Vec<u32> = vec![];
+
+    let image = tileset
+        .image
+        .as_ref()
+        .expect("Tileset does not have an image");
+    let image_size = Vec2::new(image.width as f32, image.height as f32);
+    let tile_size = Vec2::new(map.tile_width as f32, map.tile_height as f32);
+    let tileset_tile_size = Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32);
+
+    let width = layer.width().unwrap();
+    let height = layer.height().unwrap();
+
+    // generate the mesh data for each tile
+    for x in 0..width {
+        for y in 0..height {
+            let Some(tile) = layer.get_tile(x as i32, y as i32) else { continue; };
+            let y = height - y - 1;
+            let (xf, yf) = (x as f32, y as f32);
+
+            if let Some(anim_tile) = tile.get_tile() {
+                if let Some(frames) = &anim_tile.animation {
+                    let tf = Transform::from_xyz(
+                        (xf + 0.5) * tileset_tile_size.x,
+                        (yf + 0.5) * tileset_tile_size.y,
+                        0.,
+                    );
+                    let mut indices = AnimationIndices::from_frames(frames);
+                    indices.flip_x = tile.flip_h;
+                    indices.flip_y = tile.flip_v;
+                    animated_tiles.push(AnimatedTileBundle {
+                        sprite: TextureAtlasSprite::new(0),
+                        animation: AnimationBundle::new(
+                            indices,
+                            Timer::new(
+                                Duration::from_millis(
+                                    frames.iter().fold(0u64, |ms, f| ms + f.duration as u64)
+                                        / frames.len() as u64,
+                                ),
+                                TimerMode::Repeating,
+                            ),
+                        ),
+
+                        spatial: SpatialBundle::from_transform(tf),
+                    });
+                    continue;
+                }
+            }
+
+            let [a, b, c, d] =
+                quad.map(|[xp, yp, zp]| [(xp + xf) * tile_size.x, (yp + yf) * tile_size.y, zp]);
+            let vc = positions.len() as u32;
+            positions.extend([a, b, c, d]);
+            normals.extend(vec![[0., 0., 1.]; 4]);
+            indices.extend([0, 1, 2, 2, 3, 0].map(|i| i + vc));
+            uvs.extend(tile_to_uvs(tile, image_size, tileset_tile_size));
+        }
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.set_indices(Some(Indices::U32(indices)));
+    (mesh, animated_tiles)
+}
+
 fn tilemap_initializer(
     mut commands: Commands,
     q_loader: Query<(Entity, &TilemapLoader, Option<&Transform>)>,
     asset_server: Res<AssetServer>,
     maps: Res<Assets<TiledMap>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut atlases: ResMut<Assets<TextureAtlas>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     for (entity, loader, transform) in &q_loader {
@@ -75,6 +163,7 @@ fn tilemap_initializer(
             .as_ref()
             .expect("Tileset has no associated image.");
         let tileset_handle = asset_server.load(image.source.clone());
+        let tileset_rows = image.height / tileset.tile_height as i32;
 
         // tileset image material
         let material = ColorMaterial {
@@ -83,29 +172,33 @@ fn tilemap_initializer(
         };
         let material_handle = materials.add(material);
 
+        let map_size = map_size(&map);
+        let tileset_tile_size = UVec2::new(tileset.tile_width, tileset.tile_height).as_vec2();
+
         // parent tilemap entity
         let tilemap_entity = commands
             .spawn(TilemapBundle {
                 tilemap: Tilemap,
                 aabb: tilemap_aabb(map),
                 spatial: SpatialBundle::from_transform(transform.cloned().unwrap_or_default()),
-                spawnpoints: get_map_spawnpoints(&map),
             })
             .id();
 
         // process each map layer
-        for layer in map.layers() {
+        for (layer_i, layer) in map.layers().enumerate() {
             let layer_type = layer.user_type.as_deref();
+            let layer_z_offset = layer_i as f32 * 0.1;
             match layer.layer_type() {
                 tiled::LayerType::Tiles(layer) => {
-                    let mesh = layer_to_mesh(map, &layer, tileset.as_ref());
+                    let (mesh, animated) = decompose_layer(map, &layer, tileset.as_ref());
                     let mesh_handle = meshes.add(mesh);
 
-                    let z = if layer_type.is_some_and(|s| s == "foreground") {
-                        MAP_FG_Z
-                    } else {
-                        0.
-                    };
+                    let z = layer_z_offset
+                        + if layer_type.is_some_and(|s| s == "foreground") {
+                            MAP_FG_Z
+                        } else {
+                            0.
+                        };
 
                     let layer_mesh_entity = commands
                         .spawn(MaterialMesh2dBundle {
@@ -115,6 +208,20 @@ fn tilemap_initializer(
                             ..default()
                         })
                         .id();
+                    commands.entity(layer_mesh_entity).with_children(|parent| {
+                        for tile in animated {
+                            parent
+                                .spawn(tile)
+                                .insert(atlases.add(TextureAtlas::from_grid(
+                                    tileset_handle.clone(),
+                                    tileset_tile_size,
+                                    tileset.columns as usize,
+                                    tileset_rows as usize,
+                                    None,
+                                    None,
+                                )));
+                        }
+                    });
                     commands.entity(tilemap_entity).add_child(layer_mesh_entity);
                 }
                 tiled::LayerType::Objects(layer) => {
@@ -127,7 +234,24 @@ fn tilemap_initializer(
                                 .id();
                             commands.entity(tilemap_entity).add_child(body);
                         });
-                    } else if layer_type.is_some_and(|v| v == "spawns") {
+                    } else if layer_type.is_some_and(|v| v == "spawnpoints") {
+                        layer
+                            .objects()
+                            .filter_map(|object| match object.shape {
+                                tiled::ObjectShape::Point(x, y) => {
+                                    Some(Vec2::new(x, map_size.y - y))
+                                }
+                                _ => None,
+                            })
+                            .for_each(|spawnpoint| {
+                                let spawnpoint_entity = commands
+                                    .spawn(Spawnpoint)
+                                    .insert(TransformBundle::from_transform(
+                                        Transform::from_translation(spawnpoint.extend(0.)),
+                                    ))
+                                    .id();
+                                commands.entity(tilemap_entity).add_child(spawnpoint_entity);
+                            });
                     }
                 }
                 _ => (),
@@ -137,28 +261,6 @@ fn tilemap_initializer(
         // despawn the loader
         commands.entity(entity).despawn_recursive();
     }
-}
-
-fn get_map_spawnpoints(map: &tiled::Map) -> Spawnpoints {
-    let mut res = vec![];
-
-    let map_size = map_size(&map);
-
-    for layer in map.layers() {
-        let class = layer.user_type.as_deref();
-        let Some(layer) = layer.as_object_layer() else { continue; };
-        if class.is_some_and(|s| s == "spawnpoints") {
-            layer
-                .objects()
-                .filter_map(|object| match object.shape {
-                    tiled::ObjectShape::Point(x, y) => Some(Vec2::new(x, map_size.y - y)),
-                    _ => None,
-                })
-                .for_each(|spawnpoint| res.push(spawnpoint));
-        }
-    }
-
-    Spawnpoints(res)
 }
 
 fn layer_to_collision(map: &tiled::Map, layer: &tiled::ObjectLayer) -> Vec<(Hitbox, Transform)> {
@@ -264,52 +366,6 @@ fn tile_to_uvs(tile: tiled::LayerTile, image_size: Vec2, tile_size: Vec2) -> [[f
     };
 
     [a, b, c, d]
-}
-
-fn layer_to_mesh(map: &tiled::Map, layer: &tiled::TileLayer, tileset: &tiled::Tileset) -> Mesh {
-    //NOTE: tiled renders right-down, but bevy is right-up (y is flipped)
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
-
-    // ccw vertices
-    let quad: [[f32; 3]; 4] = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
-
-    let mut positions: Vec<[f32; 3]> = vec![];
-    let mut normals: Vec<[f32; 3]> = vec![];
-    let mut uvs: Vec<[f32; 2]> = vec![];
-    let mut indices: Vec<u32> = vec![];
-
-    let image = tileset
-        .image
-        .as_ref()
-        .expect("Tileset does not have an image");
-    let image_size = Vec2::new(image.width as f32, image.height as f32);
-    let tile_size = Vec2::new(map.tile_width as f32, map.tile_height as f32);
-    let tileset_tile_size = Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32);
-
-    let width = layer.width().unwrap();
-    let height = layer.height().unwrap();
-
-    // generate the mesh data for each tile
-    for x in 0..width {
-        for y in 0..height {
-            let Some(tile) = layer.get_tile(x as i32, y as i32) else { continue; };
-            let y = height - y - 1;
-            let (xf, yf) = (x as f32, y as f32);
-
-            let [a, b, c, d] =
-                quad.map(|[xp, yp, zp]| [(xp + xf) * tile_size.x, (yp + yf) * tile_size.y, zp]);
-            let vc = positions.len() as u32;
-            positions.extend([a, b, c, d]);
-            normals.extend(vec![[0., 0., 1.]; 4]);
-            indices.extend([0, 1, 2, 2, 3, 0].map(|i| i + vc));
-            uvs.extend(tile_to_uvs(tile, image_size, tileset_tile_size));
-        }
-    }
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.set_indices(Some(Indices::U32(indices)));
-    mesh
 }
 
 struct BytesResourceReader {

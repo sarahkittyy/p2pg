@@ -46,7 +46,7 @@ pub fn view_to_world(pos: Vec2, camera: &Camera, transform: &GlobalTransform) ->
 pub fn to_u8_angle(angle: f32) -> u8 {
     let t = angle / (2. * PI);
     let angle = t.clamp(0., 1.) * 255.;
-    angle.floor() as u8
+    angle.round() as u8
 }
 
 // 0-255 => 0-2pi
@@ -97,19 +97,15 @@ pub fn input(
     let mut dir = IVec2::ZERO;
     if window.focused {
         if keys.pressed(KeyCode::A) {
-            btn |= MOVE;
             dir += IVec2::NEG_X;
         }
         if keys.pressed(KeyCode::D) {
-            btn |= MOVE;
             dir += IVec2::X;
         }
         if keys.pressed(KeyCode::W) {
-            btn |= MOVE;
             dir += IVec2::Y;
         }
         if keys.pressed(KeyCode::S) {
-            btn |= MOVE;
             dir += IVec2::NEG_Y;
         }
         if mouse_buttons.pressed(MouseButton::Left)
@@ -117,6 +113,9 @@ pub fn input(
         {
             btn |= FIRE;
         }
+    }
+    if dir.length_squared() > 0 {
+        btn |= MOVE;
     }
 
     let mut angle = input_angle.0;

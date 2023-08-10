@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_ggrs::*;
 use bevy_matchbox::prelude::*;
 
-use crate::component::*;
+use crate::{component::*, GameFrameCount};
 use crate::{input, rand::Rng, GameState};
 
 #[derive(Debug)]
@@ -14,7 +14,9 @@ impl ggrs::Config for GgrsConfig {
 }
 
 #[derive(Resource)]
-pub struct LocalPlayerId(pub usize);
+pub struct LocalPlayer {
+    pub id: usize,
+}
 
 pub struct NetworkingPlugin;
 impl Plugin for NetworkingPlugin {
@@ -28,7 +30,11 @@ impl Plugin for NetworkingPlugin {
             .register_rollback_component::<Lifetime>()
             .register_rollback_component::<InputAngle>()
             .register_rollback_component::<WallContactState>()
+            .register_rollback_component::<Health>()
+            .register_rollback_component::<Points>()
+            .register_rollback_component::<LastDamagedBy>()
             .register_rollback_resource::<Rng>()
+            .register_rollback_resource::<GameFrameCount>()
             .build(app);
     }
 }
@@ -86,12 +92,12 @@ pub fn wait_for_players(
         .with_input_delay(2)
         .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 60 });
 
-    for (i, player) in players.into_iter().enumerate() {
+    for (id, player) in players.into_iter().enumerate() {
         if player == ggrs::PlayerType::Local {
-            commands.insert_resource(LocalPlayerId(i));
+            commands.insert_resource(LocalPlayer { id });
         }
         session_builder = session_builder
-            .add_player(player, i)
+            .add_player(player, id)
             .expect("Could not add player to session");
     }
 
@@ -102,5 +108,5 @@ pub fn wait_for_players(
         .expect("Could not init p2p session.");
 
     commands.insert_resource(Session::P2P(ggrs_session));
-    next_state.set(GameState::Countdown);
+    next_state.set(GameState::Game);
 }

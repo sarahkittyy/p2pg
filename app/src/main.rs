@@ -8,6 +8,8 @@ use bevy::{
 };
 use bevy_egui::EguiPlugin;
 use bevy_ggrs::*;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_matchbox::{prelude::SingleChannel, MatchboxSocket};
 
 mod animation;
 mod camera;
@@ -20,8 +22,6 @@ mod p2p;
 mod rand;
 
 use animation::*;
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_matchbox::{prelude::SingleChannel, MatchboxSocket};
 use collision::*;
 use component::*;
 use input::*;
@@ -35,8 +35,7 @@ pub enum GameState {
     Loading,
     Lobby,
     Connecting,
-    Countdown,
-    Combat,
+    Game,
 }
 
 #[derive(States, Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -48,6 +47,9 @@ pub enum DebugState {
 
 #[derive(Resource)]
 struct LoadingAssets(Vec<HandleUntyped>);
+
+#[derive(Resource, Debug, Reflect, Default)]
+struct GameFrameCount(u64);
 
 pub const MAP_Z: f32 = 0.;
 pub const PLAYER_Z: f32 = 10.;
@@ -61,6 +63,7 @@ fn main() {
         .insert_resource(LoadingAssets(vec![]))
         .register_type::<WallContactState>()
         .register_type::<Velocity>()
+        .register_type::<InputAngle>()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -91,7 +94,7 @@ fn main() {
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
         .add_systems(OnExit(GameState::Loading), camera::spawn_primary) // pre-connect initialization (camera, bg, etc.)
         // LOBBY
-        .add_systems(OnEnter(GameState::Lobby), reset_game)
+        .add_systems(OnEnter(GameState::Lobby), unload_game)
         .add_systems(Update, gui::main_menu.run_if(in_state(GameState::Lobby)))
         // CONNECTING
         .add_systems(OnEnter(GameState::Connecting), setup_socket)
@@ -99,16 +102,16 @@ fn main() {
             Update,
             (wait_for_players, gui::connecting).run_if(in_state(GameState::Connecting)),
         ) // "lobby" -> waits for other player(s) and then transitions to countdown
-        .add_systems(OnExit(GameState::Connecting), spawn_players) // spawn players once connected
-        // COUNTDOWN
         .add_systems(
-            GgrsSchedule,
-            countdown.run_if(in_state(GameState::Countdown)),
-        ) //TODO: pre-game countdown system
+            OnEnter(GameState::Game),
+            (spawn_players, reset_frame_count).chain(),
+        ) // spawn players once connected
         // COMBAT
         .add_systems(
             GgrsSchedule,
             (
+                restart_on_death,
+                first_frame_init, // runs only if frame_count is 0
                 sense_walls,
                 move_player,
                 collision::player_terrain_system,
@@ -117,12 +120,14 @@ fn main() {
                 shoot,
                 //collision::bullet_terrain_system,
                 collision::bullet_player_system,
+                award_points,
                 reload,
                 move_bullets,
                 despawn_after_lifetime,
+                increment_frame_count,
             )
                 .chain()
-                .run_if(in_state(GameState::Combat)),
+                .run_if(in_state(GameState::Game)),
         ) // synchronized p2p combat system ("the gameplay")
         // MISC
         .add_systems(
@@ -133,12 +138,79 @@ fn main() {
                 animate_player,
                 animate_bow,
                 process_ggrs_events,
+                gui::points_display.run_if(in_state(GameState::Game)),
                 gui::fps_display.run_if(in_state(DebugState::On)),
             ),
         ) // client-side non-deterministic systems
         .add_plugins(EguiPlugin)
         .add_plugins(WorldInspectorPlugin::new().run_if(in_state(DebugState::On)))
         .run();
+}
+
+fn award_points(
+    mut commands: Commands,
+    q_damaged: Query<(Entity, &LastDamagedBy)>,
+    mut q_player: Query<(&Player, &mut Points)>,
+) {
+    for (victim, damager) in &q_damaged {
+        for (attacker, mut points) in &mut q_player {
+            if attacker.id == damager.id {
+                // this is the player that shot the damaging bullet
+                points.0 += 100;
+                commands.entity(victim).remove::<LastDamagedBy>();
+            }
+        }
+    }
+}
+
+fn restart_on_death(mut fc: ResMut<GameFrameCount>, q_player: Query<&Health, With<Player>>) {
+    for health in &q_player {
+        if health.0 <= 0 {
+            fc.0 = 0;
+        }
+    }
+}
+
+fn first_frame_init(
+    mut commands: Commands,
+    fc: Res<GameFrameCount>,
+    mut q_player: Query<(Entity, &mut Transform), With<Player>>,
+    q_bullet: Query<Entity, With<Bullet>>,
+    q_spawns: Query<&GlobalTransform, (With<Spawnpoint>, Without<Player>)>,
+    mut rng: ResMut<Rng>,
+) {
+    if fc.0 != 0 {
+        return;
+    }
+
+    // fetch all map spawnpoints
+    let mut spawns: Vec<Vec2> = q_spawns
+        .iter()
+        .map(|gt| gt.translation().truncate())
+        .collect();
+
+    let player_iter = q_player.iter_mut();
+    assert!(spawns.len() >= player_iter.len());
+
+    // for every player...
+    for (player, mut transform) in player_iter {
+        // reset core components
+        commands.entity(player).insert(BasePlayerBundle::default());
+
+        //.. move to a random spawn point
+        let spawn = rng.extract_random(&mut spawns);
+        transform.translation.x = spawn.x;
+        transform.translation.y = spawn.y;
+    }
+
+    // despawn all bullets
+    for bullet in &q_bullet {
+        commands.entity(bullet).despawn_recursive();
+    }
+}
+
+fn increment_frame_count(mut fc: ResMut<GameFrameCount>) {
+    fc.0 += 1;
 }
 
 fn toggle_debug(
@@ -154,7 +226,7 @@ fn toggle_debug(
     }
 }
 
-fn reset_game(
+fn unload_game(
     mut commands: Commands,
     q_player: Query<Entity, With<Player>>,
     q_bullet: Query<Entity, With<Bullet>>,
@@ -224,10 +296,6 @@ fn check_load(
     }
 }
 
-fn countdown(mut next_state: ResMut<NextState<GameState>>) {
-    next_state.set(GameState::Combat);
-}
-
 fn move_bullets(mut q_bullets: Query<(&Velocity, &mut Transform), With<Bullet>>) {
     for (vel, mut bullet_transform) in &mut q_bullets {
         bullet_transform.translation.x += vel.0.x;
@@ -260,7 +328,13 @@ fn shoot(
             let pos = player_transform.translation.truncate();
 
             commands
-                .spawn(BulletBundle::new(dir, 2.2, 150, bullet_handle.clone()))
+                .spawn(BulletBundle::new(
+                    player.id,
+                    dir,
+                    2.5,
+                    150,
+                    bullet_handle.clone(),
+                ))
                 .insert(
                     Transform::from_xyz(pos.x + dir.x * 16., pos.y + dir.y * 16., BULLET_Z)
                         .with_rotation(Quat::from_rotation_z(arrow_angle)),
@@ -343,10 +417,11 @@ fn animate_bow(
     for (mut bow_indices, parent) in &mut q_bow {
         let Ok(can_shoot) = q_player.get(parent.get()) else { continue; };
         let new_indices = if can_shoot.since_last > 10 {
-            BOW_DRAW
+            BowAnimation::Draw
         } else {
-            BOW_EMPTY
-        };
+            BowAnimation::Empty
+        }
+        .into();
         if *bow_indices != new_indices {
             *bow_indices = new_indices;
         }
@@ -413,14 +488,22 @@ fn move_player(
     mut q_player: Query<(&mut Transform, &mut Velocity, &WallContactState, &Player)>,
     inputs: Res<PlayerInputs<GgrsConfig>>,
 ) {
+    // the epsilon around which input axis are snapped to 0
+    const SNAP_TO_AXIS: f32 = 0.02;
     for (mut transform, mut velocity, walls, player) in &mut q_player {
         let (input, _) = inputs[player.id];
 
         velocity.0 = if !input.moving() {
             Vec2::ZERO
         } else {
-            let dir = wall_direction_clamp(input.direction(), walls).normalize_or_zero();
-            (dir * 1.4).normalize_or_zero()
+            let mut input_dir = input.direction();
+            if input_dir.x.abs() <= SNAP_TO_AXIS {
+                input_dir.x = 0.
+            }
+            if input_dir.y.abs() <= SNAP_TO_AXIS {
+                input_dir.y = 0.
+            }
+            wall_direction_clamp(input_dir, walls).normalize_or_zero() * 1.4
         };
 
         transform.translation += velocity.0.extend(0.);
@@ -434,6 +517,10 @@ fn despawn_after_lifetime(mut commands: Commands, mut query: Query<(Entity, &mut
             commands.entity(entity).despawn_recursive();
         }
     }
+}
+
+fn reset_frame_count(mut commands: Commands) {
+    commands.insert_resource(GameFrameCount(0));
 }
 
 fn spawn_players(
