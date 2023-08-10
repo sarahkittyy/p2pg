@@ -105,7 +105,8 @@ fn decompose_layer(
                         0.,
                     );
                     let mut indices = AnimationIndices::from_frames(frames);
-                    indices.flip_x = tile.flip_h;
+                    //TODO: diagonal flipping
+					indices.flip_x = tile.flip_h;
                     indices.flip_y = tile.flip_v;
                     animated_tiles.push(AnimatedTileBundle {
                         sprite: TextureAtlasSprite::new(0),

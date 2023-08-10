@@ -75,7 +75,7 @@ pub fn input(
 
     q_window: Query<(Entity, &Window)>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    mut q_player: Query<(&Player, &mut InputAngle, &GlobalTransform)>,
+    mut q_player: Query<(&Player, &mut InputAngle, &Transform)>,
 
     mut ctxs: EguiContexts,
 ) -> PlayerInput {
@@ -84,7 +84,7 @@ pub fn input(
 
     let ctx = ctxs.try_ctx_for_window_mut(window_entity);
     let Some((_player, mut input_angle, player_transform)) = q_player.iter_mut().filter(|(p, ..)| p.id == player_handle.0).next() else { return PlayerInput::default(); };
-    let player_pos = player_transform.translation().truncate();
+    let player_pos = player_transform.translation.truncate();
 
     if let Some(touch_input) = touch.drain(player_pos, input_angle.0, |pos| {
         view_to_world(pos, camera, camera_transform)
@@ -114,7 +114,7 @@ pub fn input(
             btn |= FIRE;
         }
     }
-    if dir.length_squared() > 0 {
+    if dir.length_squared() != 0 {
         btn |= MOVE;
     }
 
@@ -127,7 +127,7 @@ pub fn input(
     // fetch our own player position
     if let Some(cursor_pos) = cursor_pos {
         // cursor in window
-        let self_pos = player_transform.translation().truncate();
+        let self_pos = player_transform.translation.truncate();
         angle = to_u8_angle(vec_to_angle(cursor_pos - self_pos));
     }
     input_angle.0 = angle;
