@@ -8,7 +8,8 @@ use bevy::{
 };
 
 use crate::{
-    component::{FollowPlayer, MainCamera, MinimapCamera, Player, Tilemap},
+    component::{FollowPlayer, MainCamera, MinimapCamera, Player},
+    map::Tilemap,
     p2p::LocalPlayer,
 };
 
@@ -28,6 +29,8 @@ pub fn spawn_primary(mut commands: Commands) {
                     max_height,
                     max_width,
                 },
+                near: -1000.,
+                far: 1000.,
                 ..default()
             },
             camera: Camera {
@@ -87,7 +90,7 @@ pub fn follow_player(
 }
 
 /// spawns a tiny minimap in the top-left corner
-pub fn spawn_minimap_camera(mut commands: Commands) {
+pub fn spawn_minimap(mut commands: Commands) {
     commands
         .spawn(MinimapCamera)
         .insert(Camera2dBundle {

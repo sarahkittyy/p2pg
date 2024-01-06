@@ -12,7 +12,7 @@ pub struct Player {
 #[derive(Component, Debug)]
 pub struct Bow;
 
-#[derive(Component, Reflect, Default, Debug)]
+#[derive(Component, Clone, Copy, Reflect, Default, Debug)]
 pub struct Velocity(pub Vec2);
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,13 +23,13 @@ pub enum Facing {
     Left,
 }
 
-#[derive(Component, Reflect, Default, Debug)]
+#[derive(Component, Clone, Copy, Reflect, Default, Debug)]
 pub struct Lifetime(pub usize);
 
-#[derive(Component, Reflect, Default, Debug)]
+#[derive(Component, Clone, Copy, Reflect, Default, Debug)]
 pub struct InputAngle(pub u8);
 
-#[derive(Component, Reflect, Default, Debug)]
+#[derive(Component, Clone, Copy, Reflect, Default, Debug)]
 pub struct CanShoot {
     pub value: bool,
     pub since_last: usize,
@@ -40,10 +40,10 @@ pub struct Bullet {
     pub shot_by: usize,
 }
 
-#[derive(Component, Default, Debug, Reflect)]
+#[derive(Component, Clone, Copy, Default, Debug, Reflect)]
 pub struct Health(pub i32);
 
-#[derive(Component, Default, Debug, Reflect)]
+#[derive(Component, Clone, Copy, Default, Debug, Reflect)]
 pub struct LastDamagedBy {
     pub id: usize,
 }
@@ -57,13 +57,10 @@ pub struct MainCamera;
 #[derive(Component)]
 pub struct MinimapCamera;
 
-#[derive(Component)]
-pub struct Tilemap;
-
-#[derive(Component, Reflect, Debug, Default)]
+#[derive(Component, Clone, Copy, Reflect, Debug, Default)]
 pub struct Points(pub u32);
 
-#[derive(Component, Default, Debug, Reflect)]
+#[derive(Component, Clone, Copy, Default, Debug, Reflect)]
 pub struct WallContactState {
     pub up: bool,
     pub down: bool,

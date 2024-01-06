@@ -41,13 +41,13 @@ impl AnimationIndices {
     }
 }
 
-#[derive(Component, Debug, Reflect)]
+#[derive(Component, Debug, Reflect, Clone)]
 pub struct AnimationTimer(pub Timer);
 
-#[derive(Component, Debug, Reflect)]
+#[derive(Component, Debug, Reflect, Clone)]
 pub struct AnimationFrame(pub usize);
 
-#[derive(Bundle)]
+#[derive(Bundle, Clone)]
 pub struct AnimationBundle {
     pub indices: AnimationIndices,
     pub timer: AnimationTimer,

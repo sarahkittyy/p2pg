@@ -3,16 +3,17 @@ use std::{io::Cursor, path::Path, sync::Arc, time::Duration};
 use crate::{
     animation::{AnimationBundle, AnimationIndices},
     collision::{Hitbox, RigidBodyBundle},
-    component::{Spawnpoint, Tilemap},
+    component::Spawnpoint,
     MAP_FG_Z,
 };
 use anyhow::anyhow;
 use bevy::{
-    asset::{AssetLoader, LoadedAsset},
+    asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext},
     prelude::*,
     reflect::{TypePath, TypeUuid},
     render::{mesh::Indices, primitives::Aabb, render_resource::PrimitiveTopology},
     sprite::{MaterialMesh2dBundle, Mesh2dHandle},
+    utils::BoxedFuture,
 };
 use tiled;
 
@@ -20,13 +21,13 @@ pub struct TiledPlugin;
 impl Plugin for TiledPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Spawnpoint>()
-            .add_asset::<TiledMap>()
-            .add_asset_loader(TiledLoader)
+            .register_asset_loader(TiledLoader)
+            .init_asset::<TiledMap>()
             .add_systems(Update, tilemap_initializer);
     }
 }
 
-#[derive(Clone, TypeUuid, TypePath, Debug)]
+#[derive(Clone, TypeUuid, TypePath, Debug, Asset)]
 #[uuid = "1c3fd034-5b2b-43b5-b878-45849790549e"]
 pub struct TiledMap(pub tiled::Map);
 
@@ -55,11 +56,14 @@ impl TilemapLoaderBundle {
     }
 }
 
-#[derive(Bundle)]
+#[derive(Component)]
+pub struct Tilemap;
+
+#[derive(Bundle, Clone)]
 struct AnimatedTileBundle {
     sprite: TextureAtlasSprite,
     animation: AnimationBundle,
-    spatial: SpatialBundle,
+    transform: Transform,
 }
 
 fn decompose_layer(
@@ -93,7 +97,9 @@ fn decompose_layer(
     // generate the mesh data for each tile
     for x in 0..width {
         for y in 0..height {
-            let Some(tile) = layer.get_tile(x as i32, y as i32) else { continue; };
+            let Some(tile) = layer.get_tile(x as i32, y as i32) else {
+                continue;
+            };
             let y = height - y - 1;
             let (xf, yf) = (x as f32, y as f32);
 
@@ -106,8 +112,9 @@ fn decompose_layer(
                     );
                     let mut indices = AnimationIndices::from_frames(frames);
                     //TODO: diagonal flipping
-					indices.flip_x = tile.flip_h;
+                    indices.flip_x = tile.flip_h;
                     indices.flip_y = tile.flip_v;
+                    // animated tile
                     animated_tiles.push(AnimatedTileBundle {
                         sprite: TextureAtlasSprite::new(0),
                         animation: AnimationBundle::new(
@@ -120,8 +127,7 @@ fn decompose_layer(
                                 TimerMode::Repeating,
                             ),
                         ),
-
-                        spatial: SpatialBundle::from_transform(tf),
+                        transform: tf,
                     });
                     continue;
                 }
@@ -155,7 +161,9 @@ fn tilemap_initializer(
     for (entity, loader, transform) in &q_loader {
         // wait for the tile map to be loaded...
         let tiledmap_handle: Handle<TiledMap> = asset_server.load(&loader.path);
-        let Some(TiledMap(map)) = maps.get(&tiledmap_handle) else { continue; };
+        let Some(TiledMap(map)) = maps.get(&tiledmap_handle) else {
+            continue;
+        };
 
         // fetch the tileset image
         let tileset = map.tilesets().first().expect("Tileset not found...");
@@ -176,14 +184,14 @@ fn tilemap_initializer(
         let map_size = map_size(&map);
         let tileset_tile_size = UVec2::new(tileset.tile_width, tileset.tile_height).as_vec2();
 
+        let map_tf = transform.cloned().unwrap_or_default();
+
         // parent tilemap entity
-        let tilemap_entity = commands
-            .spawn(TilemapBundle {
-                tilemap: Tilemap,
-                aabb: tilemap_aabb(map),
-                spatial: SpatialBundle::from_transform(transform.cloned().unwrap_or_default()),
-            })
-            .id();
+        commands.spawn(TilemapBundle {
+            tilemap: Tilemap,
+            aabb: tilemap_aabb(&map),
+            spatial: SpatialBundle::from_transform(map_tf),
+        });
 
         // process each map layer
         for (layer_i, layer) in map.layers().enumerate() {
@@ -191,7 +199,7 @@ fn tilemap_initializer(
             let layer_z_offset = layer_i as f32 * 0.1;
             match layer.layer_type() {
                 tiled::LayerType::Tiles(layer) => {
-                    let (mesh, animated) = decompose_layer(map, &layer, tileset.as_ref());
+                    let (mesh, animated) = decompose_layer(&map, &layer, tileset.as_ref());
                     let mesh_handle = meshes.add(mesh);
 
                     let z = layer_z_offset
@@ -201,39 +209,37 @@ fn tilemap_initializer(
                             0.
                         };
 
-                    let layer_mesh_entity = commands
-                        .spawn(MaterialMesh2dBundle {
-                            mesh: Mesh2dHandle(mesh_handle.clone()),
-                            material: material_handle.clone(),
-                            transform: Transform::from_xyz(0., 0., z),
-                            ..default()
-                        })
-                        .id();
-                    commands.entity(layer_mesh_entity).with_children(|parent| {
-                        for tile in animated {
-                            parent
-                                .spawn(tile)
-                                .insert(atlases.add(TextureAtlas::from_grid(
-                                    tileset_handle.clone(),
-                                    tileset_tile_size,
-                                    tileset.columns as usize,
-                                    tileset_rows as usize,
-                                    None,
-                                    None,
-                                )));
-                        }
+                    // layer mesh
+                    let layer_tf = Transform::from_xyz(0., 0., z).mul_transform(map_tf);
+                    commands.spawn(MaterialMesh2dBundle {
+                        mesh: Mesh2dHandle(mesh_handle.clone()),
+                        material: material_handle.clone(),
+                        transform: layer_tf,
+                        ..default()
                     });
-                    commands.entity(tilemap_entity).add_child(layer_mesh_entity);
+                    // animated tile entity
+                    for tile in animated {
+                        let tile_tf = tile.transform.mul_transform(layer_tf);
+                        commands
+                            .spawn(tile)
+                            .insert(atlases.add(TextureAtlas::from_grid(
+                                tileset_handle.clone(),
+                                tileset_tile_size,
+                                tileset.columns as usize,
+                                tileset_rows as usize,
+                                None,
+                                None,
+                            )))
+                            .insert(SpatialBundle::from_transform(tile_tf));
+                    }
                 }
                 tiled::LayerType::Objects(layer) => {
                     if layer_type.is_some_and(|v| v == "collision") {
                         let hitboxes = layer_to_collision(&map, &layer);
                         hitboxes.into_iter().for_each(|(hitbox, transform)| {
-                            let body = commands
+                            commands
                                 .spawn(RigidBodyBundle::new(hitbox))
-                                .insert(transform)
-                                .id();
-                            commands.entity(tilemap_entity).add_child(body);
+                                .insert(transform.mul_transform(map_tf));
                         });
                     } else if layer_type.is_some_and(|v| v == "spawnpoints") {
                         layer
@@ -245,13 +251,11 @@ fn tilemap_initializer(
                                 _ => None,
                             })
                             .for_each(|spawnpoint| {
-                                let spawnpoint_entity = commands
+                                commands
                                     .spawn(Spawnpoint)
-                                    .insert(TransformBundle::from_transform(
+                                    .insert(TransformBundle::from_transform(map_tf.mul_transform(
                                         Transform::from_translation(spawnpoint.extend(0.)),
-                                    ))
-                                    .id();
-                                commands.entity(tilemap_entity).add_child(spawnpoint_entity);
+                                    )));
                             });
                     }
                 }
@@ -391,28 +395,31 @@ impl tiled::ResourceReader for BytesResourceReader {
     }
 }
 
+#[derive(Default)]
 struct TiledLoader;
 impl AssetLoader for TiledLoader {
+    type Asset = TiledMap;
+    type Settings = ();
+    type Error = anyhow::Error;
     fn load<'a>(
         &'a self,
-        bytes: &'a [u8],
-        load_context: &'a mut bevy::asset::LoadContext,
-    ) -> bevy::utils::BoxedFuture<'a, anyhow::Result<(), anyhow::Error>> {
+        reader: &'a mut Reader,
+        _settings: &'a Self::Settings,
+        load_context: &'a mut LoadContext,
+    ) -> BoxedFuture<'a, anyhow::Result<Self::Asset>> {
         Box::pin(async move {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
             let mut loader = tiled::Loader::with_cache_and_reader(
                 tiled::DefaultResourceCache::new(),
-                BytesResourceReader::new(bytes),
+                BytesResourceReader::new(&bytes),
             );
 
             let map = loader
                 .load_tmx_map(load_context.path())
                 .map_err(|e| anyhow!("Could not load tmx map: {e}"))?;
 
-            let loaded_map = LoadedAsset::new(TiledMap(map));
-
-            load_context.set_default_asset(loaded_map);
-
-            Ok(())
+            Ok(TiledMap(map))
         })
     }
 

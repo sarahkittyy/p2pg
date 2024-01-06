@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 // https://en.wikipedia.org/wiki/Linear_congruential_generator
-#[derive(Resource, Reflect, Debug)]
+#[derive(Resource, Clone, Copy, Reflect, Debug)]
 pub struct Rng {
     x: u64, // seed
     m: u64,
@@ -20,6 +20,7 @@ impl Default for Rng {
     }
 }
 
+#[allow(dead_code)]
 impl Rng {
     pub fn new(seed: u64) -> Self {
         Self {

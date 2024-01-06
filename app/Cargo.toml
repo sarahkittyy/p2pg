@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy_matchbox = { git = "https://github.com/johanhelsing/matchbox", branch = "unwrap-healing", features = ["ggrs"] }
-bevy = { version = "0.11", features = ["mp3", "wav"] }
-bevy_ggrs = { git = "https://github.com/gschup/bevy_ggrs", branch = "main" }
-bevy_egui = { version = "0.21" }
-bevy-inspector-egui = "0.19.0"
+bevy_matchbox = { version = "0.8", features = ["ggrs"] }
+bevy = { version = "0.12", features = ["mp3", "wav"] }
+bevy_ggrs = { version = "0.14" }
+bevy_egui = { version = "0.24" }
+bevy-inspector-egui = "0.22"
 bytemuck = "1.13.1"
 anyhow = "1.0.72"
 sepax2d = "0.3"
-tiled = { version = "0.11.1", features = ["wasm"], default-features = false }
+tiled = { version = "0.11.2", features = ["wasm"], default-features = false }

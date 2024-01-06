@@ -120,15 +120,12 @@ pub fn _bullet_terrain_system(
         (Entity, &mut Velocity, &Hitbox, &Transform),
         (With<Bullet>, Without<RigidBody>),
     >,
-    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Bullet>)>,
+    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Bullet>)>,
 ) {
     for (_b_entity, mut b_vel, b_hitbox, b_transform) in &mut q_bullet {
         for (r_hitbox, r_transform) in &q_rigidbody {
             // the arrow should bounce in this direction
-            let resolution = hitbox_collision(
-                (b_hitbox, b_transform),
-                (r_hitbox, &r_transform.compute_transform()),
-            );
+            let resolution = hitbox_collision((b_hitbox, b_transform), (r_hitbox, r_transform));
             if resolution.x.abs() > 0. {
                 b_vel.0.x = b_vel.0.x.abs() * resolution.x.signum();
             }
@@ -142,14 +139,11 @@ pub fn _bullet_terrain_system(
 /// stop players from running into solid terrain
 pub fn player_terrain_system(
     mut q_player: Query<(&Hitbox, &mut Transform), (With<Player>, Without<RigidBody>)>,
-    q_rigidbody: Query<(&Hitbox, &GlobalTransform), (With<RigidBody>, Without<Player>)>,
+    q_rigidbody: Query<(&Hitbox, &Transform), (With<RigidBody>, Without<Player>)>,
 ) {
     for (p_hitbox, mut p_transform) in &mut q_player {
         for (r_hitbox, r_transform) in &q_rigidbody {
-            let resolution = hitbox_collision(
-                (p_hitbox, &p_transform),
-                (r_hitbox, &r_transform.compute_transform()),
-            );
+            let resolution = hitbox_collision((p_hitbox, &p_transform), (r_hitbox, &r_transform));
             p_transform.translation.x += resolution.x;
             p_transform.translation.y += resolution.y;
         }
@@ -171,9 +165,9 @@ impl Plugin for DebugHitboxPlugin {
     }
 }
 
-fn collision_debug_draw(mut gizmos: Gizmos, q_hitbox: Query<(&Hitbox, &GlobalTransform)>) {
+fn collision_debug_draw(mut gizmos: Gizmos, q_hitbox: Query<(&Hitbox, &Transform)>) {
     for (hitbox, transform) in &q_hitbox {
-        match hitbox.with_transform(&transform.compute_transform()) {
+        match hitbox.with_transform(transform) {
             Hitbox::Circle { offset, radius } => {
                 gizmos.circle_2d(offset, radius, Color::RED);
             }

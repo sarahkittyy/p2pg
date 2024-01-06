@@ -21,21 +21,20 @@ pub struct LocalPlayer {
 pub struct NetworkingPlugin;
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        GgrsPlugin::<GgrsConfig>::new()
-            .with_input_system(input::input)
-            .with_update_frequency(60)
-            .register_rollback_component::<Transform>()
-            .register_rollback_component::<CanShoot>()
-            .register_rollback_component::<Velocity>()
-            .register_rollback_component::<Lifetime>()
-            .register_rollback_component::<InputAngle>()
-            .register_rollback_component::<WallContactState>()
-            .register_rollback_component::<Health>()
-            .register_rollback_component::<Points>()
-            .register_rollback_component::<LastDamagedBy>()
-            .register_rollback_resource::<Rng>()
-            .register_rollback_resource::<GameFrameCount>()
-            .build(app);
+        app.add_plugins(GgrsPlugin::<GgrsConfig>::default())
+            .add_systems(ReadInputs, input::input)
+            .set_rollback_schedule_fps(60)
+            .rollback_component_with_clone::<Transform>()
+            .rollback_component_with_copy::<CanShoot>()
+            .rollback_component_with_copy::<Velocity>()
+            .rollback_component_with_copy::<Lifetime>()
+            .rollback_component_with_copy::<InputAngle>()
+            .rollback_component_with_copy::<WallContactState>()
+            .rollback_component_with_copy::<Health>()
+            .rollback_component_with_copy::<Points>()
+            .rollback_component_with_copy::<LastDamagedBy>()
+            .rollback_resource_with_copy::<Rng>()
+            .rollback_resource_with_copy::<GameFrameCount>();
     }
 }
 
@@ -44,7 +43,7 @@ pub fn process_ggrs_events(
     session: Option<ResMut<Session<GgrsConfig>>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    use ggrs::GGRSEvent;
+    use ggrs::GgrsEvent;
 
     let Some(mut session) = session else {
         return;
@@ -55,7 +54,7 @@ pub fn process_ggrs_events(
     for event in session.events() {
         info!("GGRS Event: {event:?}");
         match event {
-            GGRSEvent::Disconnected { .. } => {
+            GgrsEvent::Disconnected { .. } => {
                 warn!("Disconneted. Returning to lobby...");
                 next_state.set(GameState::Lobby);
             }

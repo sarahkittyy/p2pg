@@ -45,14 +45,22 @@ const JOYSTICK_DEADZONE: f32 = 10.;
 fn update_virtual_joystick(
     mut q_inner: Query<
         (&mut Transform, &mut Visibility),
-        (With<JoystickInner>, Without<JoystickOuter>),
+        (
+            With<JoystickInner>,
+            Without<JoystickOuter>,
+            Without<JoystickCamera>,
+        ),
     >,
     mut q_outer: Query<
         (&mut Transform, &mut Visibility),
-        (With<JoystickOuter>, Without<JoystickInner>),
+        (
+            With<JoystickOuter>,
+            Without<JoystickInner>,
+            Without<JoystickCamera>,
+        ),
     >,
     touches: Res<TouchMovement>,
-    q_camera: Query<(&Camera, &GlobalTransform), With<JoystickCamera>>,
+    q_camera: Query<(&Camera, &Transform), With<JoystickCamera>>,
 ) {
     let (mut i_t, mut i_v) = q_inner.single_mut();
     let (mut o_t, mut o_v) = q_outer.single_mut();
@@ -156,7 +164,7 @@ pub struct TouchMovement {
 fn process_touch_events(mut touch_res: ResMut<TouchMovement>, mut events: EventReader<TouchInput>) {
     const TAP_MAX_DISTANCE: f32 = 10.;
 
-    for touch in events.iter() {
+    for touch in events.read() {
         let id = &touch.id;
         let finger: Option<&mut TouchFinger> = touch_res.fingers.get_mut(id);
         info!(
@@ -211,17 +219,13 @@ fn process_touch_events(mut touch_res: ResMut<TouchMovement>, mut events: EventR
 
 impl TouchMovement {
     /// called during the ggrs input system. flushes all buffered inputs and returns inputs, if any
-    pub fn drain(
-        &mut self,
-        player_pos: Vec2,
-        default_angle: u8,
-        view_to_world: impl Fn(Vec2) -> Vec2,
-    ) -> Option<PlayerInput> {
+    pub fn drain(&mut self, default_angle: u8, screen_size: Vec2) -> Option<PlayerInput> {
         let mut btn = 0u8;
         let angle: u8 = if let Some(screen_pos) = self.fire_touch {
             btn |= FIRE;
             self.fire_touch = None;
-            let delta = view_to_world(screen_pos) - player_pos;
+            let mut delta = screen_pos - (screen_size / 2.);
+            delta.y = -delta.y;
             to_u8_angle(vec_to_angle(delta))
         } else {
             default_angle
@@ -250,18 +254,16 @@ impl TouchMovement {
 
 /// in debug mode, render some gizmos to display the finger's touch positions
 fn debug_touches(
-    q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    q_camera: Query<(&Camera, &Transform), With<MainCamera>>,
     touches: Res<Touches>,
     mut gizmos: Gizmos,
 ) {
-    let Ok((camera, camera_transform)) = q_camera.get_single() else { return; };
+    let Ok((camera, camera_transform)) = q_camera.get_single() else {
+        return;
+    };
     for touch in touches.iter() {
-        let start = camera
-            .viewport_to_world_2d(camera_transform, touch.start_position())
-            .unwrap();
-        let end = camera
-            .viewport_to_world_2d(camera_transform, touch.position())
-            .unwrap();
+        let start = view_to_world(touch.start_position(), camera, camera_transform);
+        let end = view_to_world(touch.position(), camera, camera_transform);
         gizmos.circle_2d(start, 4., Color::RED);
         gizmos.circle_2d(end, 4., Color::BLUE);
     }

@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use bevy::{
-    asset::LoadState,
+    asset::{LoadState, LoadedUntypedAsset},
     audio::Volume,
     audio::{PlaybackMode, VolumeLevel},
     prelude::*,
@@ -29,6 +29,8 @@ use map::*;
 use p2p::*;
 use rand::Rng;
 
+use p2p::GgrsConfig;
+
 #[derive(States, Default, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum GameState {
     #[default]
@@ -46,9 +48,9 @@ pub enum DebugState {
 }
 
 #[derive(Resource)]
-struct LoadingAssets(Vec<HandleUntyped>);
+struct LoadingAssets(Vec<Handle<LoadedUntypedAsset>>);
 
-#[derive(Resource, Debug, Reflect, Default)]
+#[derive(Resource, Clone, Copy, Debug, Reflect, Default)]
 struct GameFrameCount(u64);
 
 pub const MAP_Z: f32 = 0.;
@@ -78,7 +80,7 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest())
                 .set(AssetPlugin {
-                    asset_folder: "assets".to_owned(),
+                    mode: AssetMode::Unprocessed,
                     ..default()
                 }),
         )
@@ -94,7 +96,7 @@ fn main() {
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
         .add_systems(
             OnExit(GameState::Loading),
-            (camera::spawn_primary, camera::spawn_minimap_camera).chain(),
+            (camera::spawn_primary, camera::spawn_minimap).chain(),
         ) // pre-connect initialization (camera, bg, etc.)
         // LOBBY
         .add_systems(OnEnter(GameState::Lobby), unload_game)
@@ -277,22 +279,21 @@ fn load(
 
 fn check_load(
     loading: Res<LoadingAssets>,
+    loading_handles: Res<Assets<LoadedUntypedAsset>>,
     asset_server: Res<AssetServer>,
     mut _commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
     q_tilemap_loaders: Query<&TilemapLoader>,
 ) {
-    let assets_loaded: bool =
-        match asset_server.get_group_load_state(loading.0.iter().map(|h| h.id())) {
-            LoadState::Failed => {
-                panic!("Could not load assets...");
+    let assets_loaded: bool = loading.0.iter().all(|lua_handle| {
+        loading_handles.get(lua_handle).is_some_and(|lua| {
+            match asset_server.get_load_state(lua.handle.id()) {
+                Some(LoadState::Loaded) => true,
+                Some(LoadState::Failed) => panic!("An asset failed to load."),
+                _ => false,
             }
-            LoadState::Loaded => true,
-            _ => {
-                info!("Loading assets...");
-                false
-            }
-        };
+        })
+    });
     let tilemaps_loaded: bool = q_tilemap_loaders.is_empty();
     if assets_loaded && tilemaps_loaded {
         next_state.set(GameState::Lobby);

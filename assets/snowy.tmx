@@ -294,7 +294,7 @@
    </wangset>
   </wangsets>
  </tileset>
- <layer id="1" name="Tile Layer 1" width="50" height="50" visible="0">
+ <layer id="1" name="Tile Layer 1" width="50" height="50">
   <data encoding="csv">
 1,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,3,
 17,18,21,18,21,18,18,21,21,21,18,18,21,18,18,21,21,21,18,18,18,21,21,21,18,18,21,18,21,21,21,18,18,21,18,21,18,18,21,21,21,18,21,21,18,21,18,18,18,19,
@@ -456,7 +456,7 @@
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 </data>
  </layer>
- <layer id="6" name="foreground" class="foreground" width="50" height="50" visible="0">
+ <layer id="6" name="foreground" class="foreground" width="50" height="50">
   <data encoding="csv">
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -510,7 +510,7 @@
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 </data>
  </layer>
- <objectgroup id="4" name="collision" class="collision" visible="0">
+ <objectgroup id="4" name="collision" class="collision">
   <object id="9" x="448" y="288" width="16" height="96"/>
   <object id="19" x="464" y="288.184" width="65.25" height="1.63125"/>
   <object id="38" x="256" y="224" width="32" height="64"/>
@@ -739,7 +739,7 @@
   <object id="185" x="224" y="672" width="48" height="32"/>
   <object id="186" x="240" y="704" width="32" height="16"/>
  </objectgroup>
- <objectgroup id="5" name="spawnpoints" class="spawnpoints" visible="0">
+ <objectgroup id="5" name="spawnpoints" class="spawnpoints">
   <object id="11" x="242.5" y="665">
    <point/>
   </object>
