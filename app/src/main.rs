@@ -92,7 +92,10 @@ fn main() {
         // LOADING
         .add_systems(OnEnter(GameState::Loading), load) // load essential assets
         .add_systems(Update, check_load.run_if(in_state(GameState::Loading))) // transition state when assets loaded
-        .add_systems(OnExit(GameState::Loading), camera::spawn_primary) // pre-connect initialization (camera, bg, etc.)
+        .add_systems(
+            OnExit(GameState::Loading),
+            (camera::spawn_primary, camera::spawn_minimap_camera).chain(),
+        ) // pre-connect initialization (camera, bg, etc.)
         // LOBBY
         .add_systems(OnEnter(GameState::Lobby), unload_game)
         .add_systems(Update, gui::main_menu.run_if(in_state(GameState::Lobby)))
@@ -379,7 +382,9 @@ fn point_bow(
     inputs: Res<PlayerInputs<GgrsConfig>>,
 ) {
     for (mut transform, parent) in &mut q_bow {
-        let Ok(player) = q_player.get(parent.get()) else { continue; };
+        let Ok(player) = q_player.get(parent.get()) else {
+            continue;
+        };
         let (input, _) = inputs[player.id];
 
         let mut angle = 2. * PI - from_u8_angle(input.angle);
@@ -415,7 +420,9 @@ fn animate_bow(
     mut q_bow: Query<(&mut AnimationIndices, &Parent), With<Bow>>,
 ) {
     for (mut bow_indices, parent) in &mut q_bow {
-        let Ok(can_shoot) = q_player.get(parent.get()) else { continue; };
+        let Ok(can_shoot) = q_player.get(parent.get()) else {
+            continue;
+        };
         let new_indices = if can_shoot.since_last > 10 {
             BowAnimation::Draw
         } else {

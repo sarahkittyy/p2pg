@@ -46,8 +46,12 @@ pub fn process_ggrs_events(
 ) {
     use ggrs::GGRSEvent;
 
-    let Some(mut session) = session else { return; };
-    let Session::P2P(session) = session.as_mut() else { return; };
+    let Some(mut session) = session else {
+        return;
+    };
+    let Session::P2P(session) = session.as_mut() else {
+        return;
+    };
     for event in session.events() {
         info!("GGRS Event: {event:?}");
         match event {
@@ -90,7 +94,7 @@ pub fn wait_for_players(
     let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(num_players)
         .with_input_delay(2)
-        .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 60 });
+        .with_desync_detection_mode(ggrs::DesyncDetection::On { interval: 10 });
 
     for (id, player) in players.into_iter().enumerate() {
         if player == ggrs::PlayerType::Local {

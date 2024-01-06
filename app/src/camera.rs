@@ -52,9 +52,13 @@ pub fn follow_player(
     >,
     q_map: Query<(&Aabb, &Transform), (With<Tilemap>, Without<Camera>, Without<Player>)>,
 ) {
-    let Some(id) = local_player_id else { return; };
+    let Some(id) = local_player_id else {
+        return;
+    };
     // tilemap aabb relative to itself
-    let Ok((map_aabb, map_transform)) = q_map.get_single() else { return; };
+    let Ok((map_aabb, map_transform)) = q_map.get_single() else {
+        return;
+    };
     for (player, player_transform) in &q_player {
         if player.id != id.id {
             continue;
@@ -83,7 +87,7 @@ pub fn follow_player(
 }
 
 /// spawns a tiny minimap in the top-left corner
-fn _spawn_minimap_camera(mut commands: Commands) {
+pub fn spawn_minimap_camera(mut commands: Commands) {
     commands
         .spawn(MinimapCamera)
         .insert(Camera2dBundle {
